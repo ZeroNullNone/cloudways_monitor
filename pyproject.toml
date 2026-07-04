@@ -9,6 +9,7 @@ description = "Private Cloudways server and application monitoring dashboard."
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.124",
+    "httpx>=0.28",
     "uvicorn[standard]>=0.38",
 ]
 

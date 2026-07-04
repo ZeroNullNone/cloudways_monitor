@@ -4,13 +4,15 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from starlette.staticfiles import StaticFiles
 
-from cloudways_monitor.doctor import Doctor
+from cloudways_monitor.cloudways import CloudwaysClient
+from cloudways_monitor.doctor import CloudwaysReadinessClient, Doctor
 from cloudways_monitor.settings import Settings, SettingsError
 
 
 def create_app(
     settings: Settings | None = None,
     static_dir: str | Path | None = None,
+    cloudways_client: CloudwaysReadinessClient | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Cloudways Monitor")
 
@@ -24,9 +26,12 @@ def create_app(
     @app.get("/api/doctor")
     def doctor() -> dict[str, object]:
         resolved_settings = settings
+        resolved_cloudways_client = cloudways_client
         if resolved_settings is None:
             try:
                 resolved_settings = Settings.from_env()
+                if resolved_cloudways_client is None:
+                    resolved_cloudways_client = CloudwaysClient(resolved_settings)
             except SettingsError as exc:
                 return {
                     "status": "degraded",
@@ -41,7 +46,7 @@ def create_app(
                         },
                     },
                 }
-        return Doctor(resolved_settings).run()
+        return Doctor(resolved_settings, resolved_cloudways_client).run()
 
     resolved_static_dir = Path("frontend/dist") if static_dir is None else Path(static_dir)
     _mount_static_ui(app, resolved_static_dir)
