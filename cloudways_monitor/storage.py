@@ -5,7 +5,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 
 ResourceType = Literal["server", "application"]
@@ -30,6 +30,18 @@ class MetricSnapshot:
     raw_payload: dict[str, Any]
     collection_status: str
     error_code: str | None
+
+
+@dataclass(frozen=True)
+class MonitoredResource:
+    id: int
+    provider_id: str
+    resource_type: ResourceType
+    name: str
+    parent_provider_id: str | None
+    raw: dict[str, Any]
+    discovered_at: datetime
+    updated_at: datetime
 
 
 class Database:
@@ -178,6 +190,16 @@ class Storage:
             ).fetchone()
         return int(row["id"])
 
+    def list_resources(self) -> list[MonitoredResource]:
+        with self._database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM monitored_resources
+                ORDER BY resource_type ASC, provider_id ASC
+                """
+            ).fetchall()
+        return [_resource_from_row(row) for row in rows]
+
     def insert_metric_snapshot(self, snapshot: MetricSnapshot) -> int:
         with self._database.connect() as connection:
             cursor = connection.execute(
@@ -271,6 +293,20 @@ class Storage:
                 (_format_datetime(older_than),),
             )
         return cursor.rowcount
+
+
+def _resource_from_row(row: sqlite3.Row) -> MonitoredResource:
+    return MonitoredResource(
+        id=int(row["id"]),
+        provider_id=str(row["provider_id"]),
+        resource_type=cast(ResourceType, row["resource_type"]),
+        name=str(row["name"]),
+        parent_provider_id=row["parent_provider_id"],
+        raw=json.loads(row["raw_json"]),
+        discovered_at=datetime.fromisoformat(row["discovered_at"]),
+        updated_at=datetime.fromisoformat(row["updated_at"]),
+    )
+
 
 def _snapshot_from_row(row: sqlite3.Row) -> MetricSnapshot:
     return MetricSnapshot(

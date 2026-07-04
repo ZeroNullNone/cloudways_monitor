@@ -5,6 +5,7 @@ from fastapi.responses import FileResponse
 from starlette.staticfiles import StaticFiles
 
 from cloudways_monitor.cloudways import CloudwaysClient
+from cloudways_monitor.collector import TelemetryCollector
 from cloudways_monitor.doctor import CloudwaysReadinessClient, Doctor
 from cloudways_monitor.settings import Settings, SettingsError
 
@@ -13,6 +14,7 @@ def create_app(
     settings: Settings | None = None,
     static_dir: str | Path | None = None,
     cloudways_client: CloudwaysReadinessClient | None = None,
+    telemetry_collector: TelemetryCollector | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Cloudways Monitor")
 
@@ -22,6 +24,23 @@ def create_app(
             "status": "ok",
             "service": "cloudways-monitor",
         }
+
+    @app.get("/api/collector/health")
+    def collector_health() -> dict[str, object]:
+        if telemetry_collector is None:
+            return {
+                "status": "never_run",
+                "last_run_at": None,
+                "last_success_at": None,
+                "servers_discovered": 0,
+                "applications_discovered": 0,
+                "snapshots_stored": 0,
+                "snapshots_expired": 0,
+                "stale": True,
+                "last_error_code": None,
+                "last_error": None,
+            }
+        return telemetry_collector.health.as_dict()
 
     @app.get("/api/doctor")
     def doctor() -> dict[str, object]:
