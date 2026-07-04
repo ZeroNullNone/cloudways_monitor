@@ -1,2 +1,14 @@
-context.md
-docs/*
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite
+*.sqlite3
+data/
+node_modules/
+.venv/
+__pycache__/
+.pytest_cache/
+dist/
+build/
+*.tsbuildinfo
