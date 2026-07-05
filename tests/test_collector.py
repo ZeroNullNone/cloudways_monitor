@@ -3,6 +3,7 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
+from cloudways_monitor.alerts import AlertEvaluator, AlertNotification
 from cloudways_monitor.app import create_app
 from cloudways_monitor.collector import TelemetryCollector
 from cloudways_monitor.cloudways import CloudwaysApiError
@@ -85,6 +86,26 @@ class FakeTelemetrySource:
         }
 
 
+class HighCpuTelemetrySource(FakeTelemetrySource):
+    def get_server_metrics(self, server_id: str) -> dict[str, Any]:
+        assert server_id == "123"
+        return {
+            "cpu_percent": 96.0,
+            "ram_used_mb": 1024,
+            "ram_total_mb": 2048,
+            "disk_used_gb": 30,
+            "disk_total_gb": 100,
+        }
+
+
+class FakeNotifier:
+    def __init__(self) -> None:
+        self.sent: list[AlertNotification] = []
+
+    def send_alert(self, notification: AlertNotification) -> None:
+        self.sent.append(notification)
+
+
 class FailingTelemetrySource(FakeTelemetrySource):
     def __init__(self) -> None:
         self.fail_discovery = False
@@ -150,7 +171,9 @@ def test_collector_run_once_discovers_allowed_resources_and_stores_snapshots(
 
     health = collector.run_once()
 
-    resources = {resource.provider_id: resource for resource in storage.list_resources()}
+    resources = {
+        resource.provider_id: resource for resource in storage.list_resources()
+    }
     assert set(resources) == {"123", "987", "old-server"}
     assert health.status == "ok"
     assert health.servers_discovered == 1
@@ -180,6 +203,46 @@ def test_collector_run_once_discovers_allowed_resources_and_stores_snapshots(
     assert old_snapshot is None
 
 
+def test_collector_run_once_evaluates_alerts_for_stored_snapshots(tmp_path) -> None:
+    now = datetime(2026, 7, 5, 1, 0, tzinfo=UTC)
+    settings = Settings.from_env(
+        valid_env(
+            SQLITE_PATH=str(tmp_path / "cloudways-monitor.sqlite3"),
+            MONITORED_SERVER_IDS="123",
+            ALERT_CONSECUTIVE_POLLS="3",
+        )
+    )
+    storage = make_storage(settings)
+    notifier = FakeNotifier()
+    evaluator = AlertEvaluator(
+        settings=settings,
+        storage=storage,
+        notifier=notifier,
+    )
+    clock = MutableClock(now)
+    collector = TelemetryCollector(
+        settings=settings,
+        storage=storage,
+        telemetry_source=HighCpuTelemetrySource(),
+        clock=clock,
+        alert_evaluator=evaluator,
+    )
+
+    for index in range(3):
+        clock.current_time = now + timedelta(minutes=index)
+        collector.run_once()
+
+    states = storage.list_alert_states(status="active")
+
+    assert len(states) == 1
+    assert states[0].rule_key == "cpu_percent"
+    assert states[0].severity == "critical"
+    assert states[0].consecutive_breaches == 3
+    assert [notification.resource_name for notification in notifier.sent] == [
+        "production"
+    ]
+
+
 def test_collector_failure_preserves_last_known_snapshots_and_marks_stale(
     tmp_path,
 ) -> None:
@@ -207,7 +270,9 @@ def test_collector_failure_preserves_last_known_snapshots_and_marks_stale(
     clock.current_time = failure_time
     health = collector.run_once()
 
-    resources = {resource.provider_id: resource for resource in storage.list_resources()}
+    resources = {
+        resource.provider_id: resource for resource in storage.list_resources()
+    }
     server_snapshots = storage.list_metric_snapshots(
         resource_id=resources["123"].id,
         start=now - timedelta(minutes=1),

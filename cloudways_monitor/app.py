@@ -1,3 +1,4 @@
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -8,6 +9,7 @@ from cloudways_monitor.cloudways import CloudwaysClient
 from cloudways_monitor.collector import TelemetryCollector
 from cloudways_monitor.doctor import CloudwaysReadinessClient, Doctor
 from cloudways_monitor.settings import Settings, SettingsError
+from cloudways_monitor.storage import AlertEvent, AlertState, Database, Storage
 
 
 def create_app(
@@ -15,6 +17,7 @@ def create_app(
     static_dir: str | Path | None = None,
     cloudways_client: CloudwaysReadinessClient | None = None,
     telemetry_collector: TelemetryCollector | None = None,
+    storage: Storage | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Cloudways Monitor")
 
@@ -42,6 +45,26 @@ def create_app(
             }
         return telemetry_collector.health.as_dict()
 
+    @app.get("/api/alerts")
+    def alerts(status: str | None = None) -> dict[str, object]:
+        resolved_storage = _resolve_storage(storage, settings)
+        return {
+            "alerts": [
+                _alert_state_to_dict(alert)
+                for alert in resolved_storage.list_alert_states(status=status)
+            ]
+        }
+
+    @app.get("/api/alerts/events")
+    def alert_events(limit: int = 100) -> dict[str, object]:
+        resolved_storage = _resolve_storage(storage, settings)
+        return {
+            "events": [
+                _alert_event_to_dict(event)
+                for event in resolved_storage.list_alert_events(limit=limit)
+            ]
+        }
+
     @app.get("/api/doctor")
     def doctor() -> dict[str, object]:
         resolved_settings = settings
@@ -67,10 +90,60 @@ def create_app(
                 }
         return Doctor(resolved_settings, resolved_cloudways_client).run()
 
-    resolved_static_dir = Path("frontend/dist") if static_dir is None else Path(static_dir)
+    resolved_static_dir = (
+        Path("frontend/dist") if static_dir is None else Path(static_dir)
+    )
     _mount_static_ui(app, resolved_static_dir)
 
     return app
+
+
+def _resolve_storage(
+    storage: Storage | None,
+    settings: Settings | None,
+) -> Storage:
+    if storage is not None:
+        return storage
+    try:
+        resolved_settings = settings or Settings.from_env()
+    except SettingsError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    database = Database(resolved_settings.sqlite_path)
+    database.migrate()
+    return Storage(database)
+
+
+def _alert_state_to_dict(alert: AlertState) -> dict[str, object]:
+    return {
+        "id": alert.id,
+        "resource_id": alert.resource_id,
+        "rule_key": alert.rule_key,
+        "status": alert.status,
+        "severity": alert.severity,
+        "consecutive_breaches": alert.consecutive_breaches,
+        "opened_at": _iso(alert.opened_at),
+        "resolved_at": _iso(alert.resolved_at),
+        "last_notification_at": _iso(alert.last_notification_at),
+    }
+
+
+def _alert_event_to_dict(event: AlertEvent) -> dict[str, object]:
+    return {
+        "id": event.id,
+        "resource_id": event.resource_id,
+        "rule_key": event.rule_key,
+        "event_type": event.event_type,
+        "severity": event.severity,
+        "message": event.message,
+        "created_at": event.created_at.isoformat(),
+    }
+
+
+def _iso(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return value.isoformat()
 
 
 def _mount_static_ui(app: FastAPI, static_dir: Path) -> None:

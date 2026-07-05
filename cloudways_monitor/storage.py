@@ -44,6 +44,30 @@ class MonitoredResource:
     updated_at: datetime
 
 
+@dataclass(frozen=True)
+class AlertState:
+    id: int
+    resource_id: int
+    rule_key: str
+    status: str
+    severity: str | None
+    consecutive_breaches: int
+    opened_at: datetime | None
+    resolved_at: datetime | None
+    last_notification_at: datetime | None
+
+
+@dataclass(frozen=True)
+class AlertEvent:
+    id: int
+    resource_id: int
+    rule_key: str
+    event_type: str
+    severity: str | None
+    message: str
+    created_at: datetime
+
+
 class Database:
     def __init__(self, sqlite_path: str | Path) -> None:
         self.sqlite_path = Path(sqlite_path)
@@ -200,6 +224,19 @@ class Storage:
             ).fetchall()
         return [_resource_from_row(row) for row in rows]
 
+    def get_resource(self, resource_id: int) -> MonitoredResource | None:
+        with self._database.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM monitored_resources
+                WHERE id = ?
+                """,
+                (resource_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _resource_from_row(row)
+
     def insert_metric_snapshot(self, snapshot: MetricSnapshot) -> int:
         with self._database.connect() as connection:
             cursor = connection.execute(
@@ -294,6 +331,135 @@ class Storage:
             )
         return cursor.rowcount
 
+    def get_alert_state(self, *, resource_id: int, rule_key: str) -> AlertState | None:
+        with self._database.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM alert_states
+                WHERE resource_id = ? AND rule_key = ?
+                """,
+                (resource_id, rule_key),
+            ).fetchone()
+        if row is None:
+            return None
+        return _alert_state_from_row(row)
+
+    def save_alert_state(
+        self,
+        *,
+        resource_id: int,
+        rule_key: str,
+        status: str,
+        severity: str | None,
+        consecutive_breaches: int,
+        opened_at: datetime | None,
+        resolved_at: datetime | None,
+        last_notification_at: datetime | None,
+    ) -> AlertState:
+        with self._database.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO alert_states (
+                    resource_id,
+                    rule_key,
+                    status,
+                    severity,
+                    consecutive_breaches,
+                    opened_at,
+                    resolved_at,
+                    last_notification_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(resource_id, rule_key) DO UPDATE SET
+                    status = excluded.status,
+                    severity = excluded.severity,
+                    consecutive_breaches = excluded.consecutive_breaches,
+                    opened_at = excluded.opened_at,
+                    resolved_at = excluded.resolved_at,
+                    last_notification_at = excluded.last_notification_at
+                """,
+                (
+                    resource_id,
+                    rule_key,
+                    status,
+                    severity,
+                    consecutive_breaches,
+                    _format_optional_datetime(opened_at),
+                    _format_optional_datetime(resolved_at),
+                    _format_optional_datetime(last_notification_at),
+                ),
+            )
+            row = connection.execute(
+                """
+                SELECT * FROM alert_states
+                WHERE resource_id = ? AND rule_key = ?
+                """,
+                (resource_id, rule_key),
+            ).fetchone()
+        return _alert_state_from_row(row)
+
+    def list_alert_states(self, *, status: str | None = None) -> list[AlertState]:
+        query = "SELECT * FROM alert_states"
+        parameters: tuple[str, ...] = ()
+        if status is not None:
+            query += " WHERE status = ?"
+            parameters = (status,)
+        query += " ORDER BY resource_id ASC, rule_key ASC"
+        with self._database.connect() as connection:
+            rows = connection.execute(query, parameters).fetchall()
+        return [_alert_state_from_row(row) for row in rows]
+
+    def insert_alert_event(
+        self,
+        *,
+        resource_id: int,
+        rule_key: str,
+        event_type: str,
+        severity: str | None,
+        message: str,
+        created_at: datetime,
+    ) -> AlertEvent:
+        with self._database.connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO alert_events (
+                    resource_id,
+                    rule_key,
+                    event_type,
+                    severity,
+                    message,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    resource_id,
+                    rule_key,
+                    event_type,
+                    severity,
+                    message,
+                    _format_datetime(created_at),
+                ),
+            )
+            row = connection.execute(
+                """
+                SELECT * FROM alert_events
+                WHERE id = ?
+                """,
+                (cursor.lastrowid,),
+            ).fetchone()
+        return _alert_event_from_row(row)
+
+    def list_alert_events(self, *, limit: int = 100) -> list[AlertEvent]:
+        with self._database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM alert_events
+                ORDER BY created_at ASC, id ASC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [_alert_event_from_row(row) for row in rows]
+
 
 def _resource_from_row(row: sqlite3.Row) -> MonitoredResource:
     return MonitoredResource(
@@ -305,6 +471,32 @@ def _resource_from_row(row: sqlite3.Row) -> MonitoredResource:
         raw=json.loads(row["raw_json"]),
         discovered_at=datetime.fromisoformat(row["discovered_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
+    )
+
+
+def _alert_state_from_row(row: sqlite3.Row) -> AlertState:
+    return AlertState(
+        id=int(row["id"]),
+        resource_id=int(row["resource_id"]),
+        rule_key=str(row["rule_key"]),
+        status=str(row["status"]),
+        severity=row["severity"],
+        consecutive_breaches=int(row["consecutive_breaches"]),
+        opened_at=_parse_optional_datetime(row["opened_at"]),
+        resolved_at=_parse_optional_datetime(row["resolved_at"]),
+        last_notification_at=_parse_optional_datetime(row["last_notification_at"]),
+    )
+
+
+def _alert_event_from_row(row: sqlite3.Row) -> AlertEvent:
+    return AlertEvent(
+        id=int(row["id"]),
+        resource_id=int(row["resource_id"]),
+        rule_key=str(row["rule_key"]),
+        event_type=str(row["event_type"]),
+        severity=row["severity"],
+        message=str(row["message"]),
+        created_at=datetime.fromisoformat(row["created_at"]),
     )
 
 
@@ -332,6 +524,18 @@ def _snapshot_from_row(row: sqlite3.Row) -> MetricSnapshot:
 
 def _format_datetime(value: datetime) -> str:
     return value.isoformat()
+
+
+def _format_optional_datetime(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return _format_datetime(value)
+
+
+def _parse_optional_datetime(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    return datetime.fromisoformat(value)
 
 
 def _json(value: dict[str, Any]) -> str:

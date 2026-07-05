@@ -31,6 +31,10 @@ class TelemetrySource(Protocol):
     ) -> Mapping[str, Any]: ...
 
 
+class SnapshotAlertEvaluator(Protocol):
+    def evaluate_snapshot(self, snapshot: MetricSnapshot) -> None: ...
+
+
 @dataclass(frozen=True)
 class CollectorHealth:
     status: CollectorStatus
@@ -72,11 +76,13 @@ class TelemetryCollector:
         storage: Storage,
         telemetry_source: TelemetrySource,
         clock: Clock | None = None,
+        alert_evaluator: SnapshotAlertEvaluator | None = None,
     ) -> None:
         self._settings = settings
         self._storage = storage
         self._telemetry_source = telemetry_source
         self._clock = clock or SystemClock()
+        self._alert_evaluator = alert_evaluator
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._health = CollectorHealth(
@@ -138,14 +144,15 @@ class TelemetryCollector:
                 metrics = self._telemetry_source.get_server_metrics(
                     _provider_id(server)
                 )
-                self._storage.insert_metric_snapshot(
-                    _metric_snapshot(
-                        resource_id=resource_id,
-                        resource_type="server",
-                        metrics=metrics,
-                        captured_at=captured_at,
-                    )
+                snapshot = _metric_snapshot(
+                    resource_id=resource_id,
+                    resource_type="server",
+                    metrics=metrics,
+                    captured_at=captured_at,
                 )
+                self._storage.insert_metric_snapshot(snapshot)
+                if self._alert_evaluator is not None:
+                    self._alert_evaluator.evaluate_snapshot(snapshot)
                 snapshots_stored += 1
 
             for application in applications:
@@ -154,14 +161,15 @@ class TelemetryCollector:
                     _provider_id(application),
                     _parent_provider_id(application),
                 )
-                self._storage.insert_metric_snapshot(
-                    _metric_snapshot(
-                        resource_id=resource_id,
-                        resource_type="application",
-                        metrics=metrics,
-                        captured_at=captured_at,
-                    )
+                snapshot = _metric_snapshot(
+                    resource_id=resource_id,
+                    resource_type="application",
+                    metrics=metrics,
+                    captured_at=captured_at,
                 )
+                self._storage.insert_metric_snapshot(snapshot)
+                if self._alert_evaluator is not None:
+                    self._alert_evaluator.evaluate_snapshot(snapshot)
                 snapshots_stored += 1
 
             snapshots_expired = self._storage.expire_metric_snapshots(
@@ -261,9 +269,8 @@ class TelemetryCollector:
     def _is_stale(self, now: datetime) -> bool:
         if self._health.last_success_at is None:
             return True
-        return (
-            now - self._health.last_success_at
-            > timedelta(seconds=self._settings.stale_after_seconds)
+        return now - self._health.last_success_at > timedelta(
+            seconds=self._settings.stale_after_seconds
         )
 
 
