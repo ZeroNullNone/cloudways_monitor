@@ -1,15 +1,29 @@
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse, RedirectResponse
+from pydantic import BaseModel
 from starlette.staticfiles import StaticFiles
 
+from cloudways_monitor.auth import (
+    AuthenticatedUser,
+    SESSION_COOKIE_NAME,
+    SESSION_MAX_AGE_SECONDS,
+    create_session_token,
+    verify_password,
+    verify_session_token,
+)
 from cloudways_monitor.cloudways import CloudwaysClient
 from cloudways_monitor.collector import TelemetryCollector
 from cloudways_monitor.doctor import CloudwaysReadinessClient, Doctor
 from cloudways_monitor.settings import Settings, SettingsError
 from cloudways_monitor.storage import AlertEvent, AlertState, Database, Storage
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
 
 def create_app(
@@ -28,8 +42,64 @@ def create_app(
             "service": "cloudways-monitor",
         }
 
+    @app.post("/api/auth/login")
+    def login(payload: LoginRequest, response: Response) -> dict[str, object]:
+        resolved_settings = _resolve_settings(settings)
+        valid_credentials = (
+            payload.username == resolved_settings.dashboard_username
+            and verify_password(
+                password=payload.password,
+                password_hash=resolved_settings.dashboard_password_hash,
+            )
+        )
+        if not valid_credentials:
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid username or password",
+            )
+
+        response.set_cookie(
+            key=SESSION_COOKIE_NAME,
+            value=create_session_token(
+                username=resolved_settings.dashboard_username,
+                secret=resolved_settings.session_secret,
+            ),
+            max_age=SESSION_MAX_AGE_SECONDS,
+            httponly=True,
+            secure=resolved_settings.session_cookie_secure,
+            samesite="lax",
+        )
+        return {
+            "authenticated": True,
+            "username": resolved_settings.dashboard_username,
+        }
+
+    @app.post("/api/auth/logout")
+    def logout(response: Response) -> dict[str, object]:
+        resolved_settings = _resolve_settings(settings)
+        response.delete_cookie(
+            key=SESSION_COOKIE_NAME,
+            httponly=True,
+            secure=resolved_settings.session_cookie_secure,
+            samesite="lax",
+        )
+        return {"authenticated": False, "username": None}
+
+    @app.get("/api/auth/me")
+    def me(request: Request) -> dict[str, object]:
+        user = _current_user(request, settings)
+        if user is None:
+            return {"authenticated": False, "username": None}
+        return {"authenticated": True, "username": user.username}
+
+    def require_authenticated_user(request: Request) -> None:
+        if _current_user(request, settings) is None:
+            raise HTTPException(status_code=401, detail="Authentication required")
+
     @app.get("/api/collector/health")
-    def collector_health() -> dict[str, object]:
+    def collector_health(
+        _authenticated: None = Depends(require_authenticated_user),
+    ) -> dict[str, object]:
         if telemetry_collector is None:
             return {
                 "status": "never_run",
@@ -46,7 +116,10 @@ def create_app(
         return telemetry_collector.health.as_dict()
 
     @app.get("/api/alerts")
-    def alerts(status: str | None = None) -> dict[str, object]:
+    def alerts(
+        status: str | None = None,
+        _authenticated: None = Depends(require_authenticated_user),
+    ) -> dict[str, object]:
         resolved_storage = _resolve_storage(storage, settings)
         return {
             "alerts": [
@@ -56,7 +129,10 @@ def create_app(
         }
 
     @app.get("/api/alerts/events")
-    def alert_events(limit: int = 100) -> dict[str, object]:
+    def alert_events(
+        limit: int = 100,
+        _authenticated: None = Depends(require_authenticated_user),
+    ) -> dict[str, object]:
         resolved_storage = _resolve_storage(storage, settings)
         return {
             "events": [
@@ -66,7 +142,9 @@ def create_app(
         }
 
     @app.get("/api/doctor")
-    def doctor() -> dict[str, object]:
+    def doctor(
+        _authenticated: None = Depends(require_authenticated_user),
+    ) -> dict[str, object]:
         resolved_settings = settings
         resolved_cloudways_client = cloudways_client
         if resolved_settings is None:
@@ -93,9 +171,29 @@ def create_app(
     resolved_static_dir = (
         Path("frontend/dist") if static_dir is None else Path(static_dir)
     )
-    _mount_static_ui(app, resolved_static_dir)
+    _mount_static_ui(app, resolved_static_dir, settings)
 
     return app
+
+
+def _resolve_settings(settings: Settings | None) -> Settings:
+    if settings is not None:
+        return settings
+    try:
+        return Settings.from_env()
+    except SettingsError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+def _current_user(
+    request: Request,
+    settings: Settings | None,
+) -> AuthenticatedUser | None:
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    if token is None:
+        return None
+    resolved_settings = _resolve_settings(settings)
+    return verify_session_token(token=token, secret=resolved_settings.session_secret)
 
 
 def _resolve_storage(
@@ -104,11 +202,7 @@ def _resolve_storage(
 ) -> Storage:
     if storage is not None:
         return storage
-    try:
-        resolved_settings = settings or Settings.from_env()
-    except SettingsError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
+    resolved_settings = _resolve_settings(settings)
     database = Database(resolved_settings.sqlite_path)
     database.migrate()
     return Storage(database)
@@ -146,7 +240,11 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat()
 
 
-def _mount_static_ui(app: FastAPI, static_dir: Path) -> None:
+def _mount_static_ui(
+    app: FastAPI,
+    static_dir: Path,
+    settings: Settings | None,
+) -> None:
     index_path = static_dir / "index.html"
     if not index_path.exists():
         return
@@ -156,13 +254,20 @@ def _mount_static_ui(app: FastAPI, static_dir: Path) -> None:
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
     @app.get("/")
-    def frontend_index() -> FileResponse:
+    def frontend_index(request: Request) -> Response:
+        if _current_user(request, settings) is None:
+            return RedirectResponse("/login")
         return FileResponse(index_path)
 
     @app.get("/{full_path:path}")
-    def frontend_fallback(full_path: str) -> FileResponse:
+    def frontend_fallback(
+        request: Request,
+        full_path: str,
+    ) -> Response:
         if full_path == "health" or full_path.startswith("api/"):
             raise HTTPException(status_code=404)
+        if full_path != "login" and _current_user(request, settings) is None:
+            return RedirectResponse("/login")
 
         requested_path = (static_dir / full_path).resolve()
         static_root = static_dir.resolve()

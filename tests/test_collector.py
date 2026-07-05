@@ -9,7 +9,7 @@ from cloudways_monitor.collector import TelemetryCollector
 from cloudways_monitor.cloudways import CloudwaysApiError
 from cloudways_monitor.settings import Settings
 from cloudways_monitor.storage import Database, MetricSnapshot, Storage
-from tests.helpers import valid_env
+from tests.helpers import login, valid_env
 
 
 class MutableClock:
@@ -307,7 +307,11 @@ def test_collector_health_endpoint_exposes_current_state(tmp_path) -> None:
         clock=MutableClock(now),
     )
     collector.run_once()
-    client = TestClient(create_app(settings=settings, telemetry_collector=collector))
+    client = TestClient(
+        create_app(settings=settings, telemetry_collector=collector),
+        base_url="https://testserver",
+    )
+    login(client)
 
     response = client.get("/api/collector/health")
 
@@ -345,7 +349,11 @@ def test_collector_health_endpoint_marks_aged_data_stale(tmp_path) -> None:
     )
     collector.run_once()
     clock.current_time = now + timedelta(minutes=4)
-    client = TestClient(create_app(settings=settings, telemetry_collector=collector))
+    client = TestClient(
+        create_app(settings=settings, telemetry_collector=collector),
+        base_url="https://testserver",
+    )
+    login(client)
 
     response = client.get("/api/collector/health")
 

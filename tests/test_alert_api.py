@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from cloudways_monitor.app import create_app
 from cloudways_monitor.settings import Settings
 from cloudways_monitor.storage import Database, Storage
-from tests.helpers import valid_env
+from tests.helpers import login, valid_env
 
 
 def test_alert_api_exposes_current_states_and_events(tmp_path) -> None:
@@ -40,7 +40,10 @@ def test_alert_api_exposes_current_states_and_events(tmp_path) -> None:
         message="production critical cpu_percent 98.0 >= 95.0 for 3 polls",
         created_at=now,
     )
-    client = TestClient(create_app(settings=settings, storage=storage))
+    client = TestClient(
+        create_app(settings=settings, storage=storage), base_url="https://testserver"
+    )
+    login(client)
 
     alerts_response = client.get("/api/alerts")
     events_response = client.get("/api/alerts/events")
@@ -101,7 +104,8 @@ def test_alert_api_uses_configured_storage_when_not_injected(tmp_path) -> None:
         resolved_at=None,
         last_notification_at=now,
     )
-    client = TestClient(create_app(settings=settings))
+    client = TestClient(create_app(settings=settings), base_url="https://testserver")
+    login(client)
 
     response = client.get("/api/alerts")
 

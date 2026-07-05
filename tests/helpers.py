@@ -1,3 +1,11 @@
+from fastapi.testclient import TestClient
+
+AUTH_PASSWORD = "correct-password"
+AUTH_PASSWORD_HASH = (
+    "pbkdf2_sha256$100000$testsalt$UYD0wkzOSvbNmj2QVVu1KD-huSLvgW5ND4OieCuF9a0"
+)
+
+
 def valid_env(**overrides: str) -> dict[str, str]:
     values = {
         "APP_ENV": "production",
@@ -14,7 +22,7 @@ def valid_env(**overrides: str) -> dict[str, str]:
         "MONITORED_SERVER_IDS": "123,456",
         "MONITORED_APP_IDS": "",
         "DASHBOARD_USERNAME": "admin",
-        "DASHBOARD_PASSWORD_HASH": "hashed-password",
+        "DASHBOARD_PASSWORD_HASH": AUTH_PASSWORD_HASH,
         "SESSION_SECRET": "a-session-secret-with-enough-entropy",
         "SESSION_COOKIE_SECURE": "true",
         "TELEGRAM_BOT_TOKEN": "telegram-token",
@@ -31,3 +39,11 @@ def valid_env(**overrides: str) -> dict[str, str]:
     }
     values.update(overrides)
     return values
+
+
+def login(client: TestClient) -> None:
+    response = client.post(
+        "/api/auth/login",
+        json={"username": "admin", "password": AUTH_PASSWORD},
+    )
+    assert response.status_code == 200
