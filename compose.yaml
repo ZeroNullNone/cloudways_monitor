@@ -4,7 +4,10 @@ services:
     env_file:
       - .env
     volumes:
-      - ./data:/data
+      - cloudways-monitor-data:/data
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     restart: unless-stopped
+
+volumes:
+  cloudways-monitor-data:
