@@ -131,7 +131,7 @@ class TelemetryCollector:
             self._thread = None
 
     def run_once(self) -> CollectorHealth:
-        captured_at = self._clock.now()
+        run_started_at = self._clock.now()
         try:
             servers = self._allowed_servers(self._telemetry_source.list_servers())
             applications = self._allowed_applications(
@@ -140,7 +140,7 @@ class TelemetryCollector:
             snapshots_stored = 0
 
             for server in servers:
-                resource_id = self._upsert_resource(server, captured_at)
+                resource_id = self._upsert_resource(server, self._clock.now())
                 metrics = self._telemetry_source.get_server_metrics(
                     _provider_id(server)
                 )
@@ -148,7 +148,7 @@ class TelemetryCollector:
                     resource_id=resource_id,
                     resource_type="server",
                     metrics=metrics,
-                    captured_at=captured_at,
+                    captured_at=self._clock.now(),
                 )
                 self._storage.insert_metric_snapshot(snapshot)
                 if self._alert_evaluator is not None:
@@ -156,7 +156,7 @@ class TelemetryCollector:
                 snapshots_stored += 1
 
             for application in applications:
-                resource_id = self._upsert_resource(application, captured_at)
+                resource_id = self._upsert_resource(application, self._clock.now())
                 metrics = self._telemetry_source.get_application_metrics(
                     _provider_id(application),
                     _parent_provider_id(application),
@@ -165,20 +165,21 @@ class TelemetryCollector:
                     resource_id=resource_id,
                     resource_type="application",
                     metrics=metrics,
-                    captured_at=captured_at,
+                    captured_at=self._clock.now(),
                 )
                 self._storage.insert_metric_snapshot(snapshot)
                 if self._alert_evaluator is not None:
                     self._alert_evaluator.evaluate_snapshot(snapshot)
                 snapshots_stored += 1
 
+            finished_at = self._clock.now()
             snapshots_expired = self._storage.expire_metric_snapshots(
-                older_than=captured_at - timedelta(days=self._settings.retention_days)
+                older_than=finished_at - timedelta(days=self._settings.retention_days)
             )
             self._health = CollectorHealth(
                 status="ok",
-                last_run_at=captured_at,
-                last_success_at=captured_at,
+                last_run_at=run_started_at,
+                last_success_at=finished_at,
                 servers_discovered=len(servers),
                 applications_discovered=len(applications),
                 snapshots_stored=snapshots_stored,
@@ -189,15 +190,16 @@ class TelemetryCollector:
             )
             return self._health
         except CloudwaysApiError as exc:
+            failed_at = self._clock.now()
             self._health = CollectorHealth(
                 status="degraded",
-                last_run_at=captured_at,
+                last_run_at=run_started_at,
                 last_success_at=self._health.last_success_at,
                 servers_discovered=self._health.servers_discovered,
                 applications_discovered=self._health.applications_discovered,
                 snapshots_stored=0,
                 snapshots_expired=0,
-                stale=self._is_stale(captured_at),
+                stale=self._is_stale(failed_at),
                 last_error_code=exc.code,
                 last_error=str(exc),
             )
@@ -270,7 +272,7 @@ class TelemetryCollector:
         if self._health.last_success_at is None:
             return True
         return now - self._health.last_success_at > timedelta(
-            seconds=self._settings.stale_after_seconds
+            seconds=self._settings.effective_stale_after_seconds
         )
 
 

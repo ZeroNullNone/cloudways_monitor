@@ -59,7 +59,7 @@ Acceptance checks:
 
 - Collector stores snapshots on schedule.
 - Failed Cloudways calls do not overwrite metrics with zero.
-- Data older than 3 minutes is marked stale.
+- Data older than the effective freshness window is marked stale; Cloudways task polling uses at least 10 polling intervals.
 
 ## Phase 5 - Alerts and Telegram
 Deliverables:

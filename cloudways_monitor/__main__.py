@@ -6,7 +6,7 @@ def main() -> None:
         "cloudways_monitor.app:create_app",
         factory=True,
         host="0.0.0.0",
-        port=8000,
+        port=8083,
     )
 
 

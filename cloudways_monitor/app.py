@@ -1,3 +1,6 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Callable, Literal
@@ -7,6 +10,7 @@ from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 from starlette.staticfiles import StaticFiles
 
+from cloudways_monitor.alerts import AlertEvaluator, TelegramNotifier
 from cloudways_monitor.auth import (
     AuthenticatedUser,
     SESSION_COOKIE_NAME,
@@ -37,6 +41,14 @@ class LoginRequest(BaseModel):
     password: str
 
 
+@dataclass
+class RuntimeState:
+    settings: Settings | None
+    storage: Storage | None
+    telemetry_collector: TelemetryCollector | None
+    cloudways_client: CloudwaysReadinessClient | None
+
+
 def create_app(
     settings: Settings | None = None,
     static_dir: str | Path | None = None,
@@ -45,7 +57,22 @@ def create_app(
     storage: Storage | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="Cloudways Monitor")
+    runtime = RuntimeState(
+        settings=settings,
+        storage=storage,
+        telemetry_collector=telemetry_collector,
+        cloudways_client=cloudways_client,
+    )
+    auto_start_collector = (
+        settings is None
+        and storage is None
+        and telemetry_collector is None
+        and cloudways_client is None
+    )
+    app = FastAPI(
+        title="Cloudways Monitor",
+        lifespan=_runtime_lifespan(runtime) if auto_start_collector else None,
+    )
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -99,7 +126,7 @@ def create_app(
 
     @app.get("/api/auth/me")
     def me(request: Request) -> dict[str, object]:
-        user = _current_user(request, settings)
+        user = _current_user(request, runtime.settings)
         if user is None:
             return {"authenticated": False, "username": None}
         return {"authenticated": True, "username": user.username}
@@ -112,25 +139,25 @@ def create_app(
     def collector_health(
         _authenticated: None = Depends(require_authenticated_user),
     ) -> dict[str, object]:
-        return _collector_health_to_dict(telemetry_collector)
+        return _collector_health_to_dict(runtime.telemetry_collector)
 
     @app.get("/api/overview")
     def overview(
         _authenticated: None = Depends(require_authenticated_user),
     ) -> dict[str, object]:
-        resolved_storage = _resolve_storage(storage, settings)
+        resolved_storage = _resolve_storage(runtime.storage, runtime.settings)
         resolved_settings = _resolve_settings(settings)
         return _overview_to_dict(
             storage=resolved_storage,
             settings=resolved_settings,
             now=_current_time(clock),
-            collector=_collector_health_to_dict(telemetry_collector),
+            collector=_collector_health_to_dict(runtime.telemetry_collector),
         )
     @app.get("/api/resources")
     def resources(
         _authenticated: None = Depends(require_authenticated_user),
     ) -> dict[str, object]:
-        resolved_storage = _resolve_storage(storage, settings)
+        resolved_storage = _resolve_storage(runtime.storage, runtime.settings)
         resolved_settings = _resolve_settings(settings)
         now = _current_time(clock)
         alerts_by_resource_id = _active_alerts_by_resource_id(resolved_storage)
@@ -152,7 +179,7 @@ def create_app(
         resource_id: int,
         _authenticated: None = Depends(require_authenticated_user),
     ) -> dict[str, object]:
-        resolved_storage = _resolve_storage(storage, settings)
+        resolved_storage = _resolve_storage(runtime.storage, runtime.settings)
         resolved_settings = _resolve_settings(settings)
         now = _current_time(clock)
         resource = resolved_storage.get_resource(resource_id)
@@ -188,7 +215,7 @@ def create_app(
         range_key: Annotated[DashboardRange, Query(alias="range")] = "1h",
         _authenticated: None = Depends(require_authenticated_user),
     ) -> dict[str, object]:
-        resolved_storage = _resolve_storage(storage, settings)
+        resolved_storage = _resolve_storage(runtime.storage, runtime.settings)
         resource = resolved_storage.get_resource(resource_id)
         if resource is None:
             raise HTTPException(status_code=404, detail="Resource not found")
@@ -214,7 +241,7 @@ def create_app(
         resource_id: int,
         _authenticated: None = Depends(require_authenticated_user),
     ) -> dict[str, object]:
-        resolved_storage = _resolve_storage(storage, settings)
+        resolved_storage = _resolve_storage(runtime.storage, runtime.settings)
         resource = resolved_storage.get_resource(resource_id)
         if resource is None:
             raise HTTPException(status_code=404, detail="Resource not found")
@@ -232,7 +259,7 @@ def create_app(
         status: str | None = None,
         _authenticated: None = Depends(require_authenticated_user),
     ) -> dict[str, object]:
-        resolved_storage = _resolve_storage(storage, settings)
+        resolved_storage = _resolve_storage(runtime.storage, runtime.settings)
         return {
             "alerts": [
                 _alert_state_to_dict(alert)
@@ -245,7 +272,7 @@ def create_app(
         limit: int = 100,
         _authenticated: None = Depends(require_authenticated_user),
     ) -> dict[str, object]:
-        resolved_storage = _resolve_storage(storage, settings)
+        resolved_storage = _resolve_storage(runtime.storage, runtime.settings)
         return {
             "events": [
                 _alert_event_to_dict(event)
@@ -266,8 +293,8 @@ def create_app(
     def doctor(
         _authenticated: None = Depends(require_authenticated_user),
     ) -> dict[str, object]:
-        resolved_settings = settings
-        resolved_cloudways_client = cloudways_client
+        resolved_settings = runtime.settings
+        resolved_cloudways_client = runtime.cloudways_client
         if resolved_settings is None:
             try:
                 resolved_settings = Settings.from_env()
@@ -295,6 +322,56 @@ def create_app(
     _mount_static_ui(app, resolved_static_dir, settings)
 
     return app
+
+
+def _runtime_lifespan(runtime: RuntimeState):
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        _start_runtime_collector(runtime)
+        try:
+            yield
+        finally:
+            _stop_runtime_collector(runtime)
+
+    return lifespan
+
+def _start_runtime_collector(runtime: RuntimeState) -> None:
+    if runtime.telemetry_collector is not None:
+        return
+
+    try:
+        resolved_settings = Settings.from_env()
+    except SettingsError:
+        return
+
+    database = Database(resolved_settings.sqlite_path)
+    database.migrate()
+    resolved_storage = Storage(database)
+    resolved_cloudways_client = CloudwaysClient(resolved_settings)
+    notifier = TelegramNotifier(settings=resolved_settings)
+    alert_evaluator = AlertEvaluator(
+        settings=resolved_settings,
+        storage=resolved_storage,
+        notifier=notifier,
+    )
+    collector = TelemetryCollector(
+        settings=resolved_settings,
+        storage=resolved_storage,
+        telemetry_source=resolved_cloudways_client,
+        alert_evaluator=alert_evaluator,
+    )
+
+    runtime.settings = resolved_settings
+    runtime.storage = resolved_storage
+    runtime.cloudways_client = resolved_cloudways_client
+    runtime.telemetry_collector = collector
+
+    collector.start()
+
+
+def _stop_runtime_collector(runtime: RuntimeState) -> None:
+    if runtime.telemetry_collector is not None:
+        runtime.telemetry_collector.stop()
 
 
 def _current_time(clock: Callable[[], datetime] | None) -> datetime:
@@ -450,13 +527,18 @@ def _series_point_to_dict(snapshot: MetricSnapshot) -> dict[str, object]:
     return {
         "captured_at": snapshot.captured_at.isoformat(),
         "cpu_percent": snapshot.cpu_percent,
+        "ram_used_mb": snapshot.ram_used_mb,
+        "ram_total_mb": snapshot.ram_total_mb,
         "ram_percent": snapshot.ram_percent,
+        "disk_used_gb": snapshot.disk_used_gb,
+        "disk_total_gb": snapshot.disk_total_gb,
         "disk_percent": snapshot.disk_percent,
         "bandwidth_bytes": snapshot.bandwidth_bytes,
         "traffic_requests": snapshot.traffic_requests,
         "collection_status": snapshot.collection_status,
         "error_code": snapshot.error_code,
     }
+
 
 def _raw_snapshot_to_dict(snapshot: MetricSnapshot) -> dict[str, object]:
     return {
@@ -467,6 +549,7 @@ def _raw_snapshot_to_dict(snapshot: MetricSnapshot) -> dict[str, object]:
         "mysql_metric": snapshot.mysql_metric,
         "raw_payload": snapshot.raw_payload,
     }
+
 
 def _resource_summary_to_dict(
     *,
@@ -502,7 +585,11 @@ def _latest_snapshot_to_dict(
             "captured_at": None,
             "stale": True,
             "cpu_percent": None,
+            "ram_used_mb": None,
+            "ram_total_mb": None,
             "ram_percent": None,
+            "disk_used_gb": None,
+            "disk_total_gb": None,
             "disk_percent": None,
             "bandwidth_bytes": None,
             "traffic_requests": None,
@@ -511,7 +598,11 @@ def _latest_snapshot_to_dict(
         "captured_at": snapshot.captured_at.isoformat(),
         "stale": _snapshot_is_stale(snapshot=snapshot, settings=settings, now=now),
         "cpu_percent": snapshot.cpu_percent,
+        "ram_used_mb": snapshot.ram_used_mb,
+        "ram_total_mb": snapshot.ram_total_mb,
         "ram_percent": snapshot.ram_percent,
+        "disk_used_gb": snapshot.disk_used_gb,
+        "disk_total_gb": snapshot.disk_total_gb,
         "disk_percent": snapshot.disk_percent,
         "bandwidth_bytes": snapshot.bandwidth_bytes,
         "traffic_requests": snapshot.traffic_requests,
@@ -526,7 +617,7 @@ def _snapshot_is_stale(
 ) -> bool:
     if snapshot is None:
         return True
-    return (now - snapshot.captured_at).total_seconds() > settings.stale_after_seconds
+    return (now - snapshot.captured_at).total_seconds() > settings.effective_stale_after_seconds
 
 
 def _compact_alert_to_dict(alert: AlertState) -> dict[str, object]:

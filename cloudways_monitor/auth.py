@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import base64
+import getpass
 import hashlib
 import hmac
 import json
+import secrets
 import time
 from dataclasses import dataclass
 
 SESSION_COOKIE_NAME = "cloudways_monitor_session"
 SESSION_MAX_AGE_SECONDS = 60 * 60 * 12
+PASSWORD_HASH_ITERATIONS = 100000
 
 
 @dataclass(frozen=True)
@@ -16,29 +19,41 @@ class AuthenticatedUser:
     username: str
 
 
-def verify_password(*, password: str, password_hash: str) -> bool:
-    parts = password_hash.split("$", 3)
-    if len(parts) != 4:
-        return False
+@dataclass(frozen=True)
+class ParsedPasswordHash:
+    algorithm: str
+    iterations: int
+    salt: str
+    expected_hash: str
 
-    algorithm, iterations_text, salt, expected_hash = parts
-    if algorithm != "pbkdf2_sha256":
-        return False
-    try:
-        iterations = int(iterations_text)
-    except ValueError:
-        return False
-    if iterations <= 0 or not salt or not expected_hash:
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_urlsafe(16)
+    derived = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt.encode("utf-8"),
+        PASSWORD_HASH_ITERATIONS,
+    )
+    return (
+        f"pbkdf2_sha256:{PASSWORD_HASH_ITERATIONS}:{salt}:"
+        f"{_base64_urlencode(derived)}"
+    )
+
+
+def verify_password(*, password: str, password_hash: str) -> bool:
+    parsed = _parse_password_hash(password_hash)
+    if parsed is None:
         return False
 
     derived = hashlib.pbkdf2_hmac(
         "sha256",
         password.encode("utf-8"),
-        salt.encode("utf-8"),
-        iterations,
+        parsed.salt.encode("utf-8"),
+        parsed.iterations,
     )
     actual_hash = _base64_urlencode(derived)
-    return hmac.compare_digest(actual_hash, expected_hash)
+    return hmac.compare_digest(actual_hash, parsed.expected_hash)
 
 
 def create_session_token(*, username: str, secret: str) -> str:
@@ -76,6 +91,29 @@ def verify_session_token(*, token: str, secret: str) -> AuthenticatedUser | None
     return AuthenticatedUser(username=username)
 
 
+def _parse_password_hash(password_hash: str) -> ParsedPasswordHash | None:
+    delimiter = ":" if ":" in password_hash else "$"
+    parts = password_hash.split(delimiter, 3)
+    if len(parts) != 4:
+        return None
+
+    algorithm, iterations_text, salt, expected_hash = parts
+    if algorithm != "pbkdf2_sha256":
+        return None
+    try:
+        iterations = int(iterations_text)
+    except ValueError:
+        return None
+    if iterations <= 0 or not salt or not expected_hash:
+        return None
+    return ParsedPasswordHash(
+        algorithm=algorithm,
+        iterations=iterations,
+        salt=salt,
+        expected_hash=expected_hash,
+    )
+
+
 def _sign(*, payload: str, secret: str) -> str:
     digest = hmac.new(
         secret.encode("utf-8"),
@@ -92,3 +130,17 @@ def _base64_urlencode(value: bytes) -> str:
 def _base64_urldecode(value: str) -> bytes:
     padding = "=" * (-len(value) % 4)
     return base64.urlsafe_b64decode(value + padding)
+
+
+def main() -> None:
+    password = getpass.getpass("New dashboard password: ")
+    confirmation = getpass.getpass("Confirm dashboard password: ")
+    if password != confirmation:
+        raise SystemExit("Passwords did not match")
+    if not password:
+        raise SystemExit("Password cannot be empty")
+    print(hash_password(password))
+
+
+if __name__ == "__main__":
+    main()

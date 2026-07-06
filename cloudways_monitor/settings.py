@@ -22,6 +22,13 @@ class Settings:
     cloudways_email: str
     cloudways_api_key: str
     cloudways_api_base_url: str
+    cloudways_task_polling_enabled: bool
+    cloudways_task_poll_attempts: int
+    cloudways_task_poll_interval_seconds: float
+    cloudways_monitor_graph_duration: str
+    cloudways_monitor_graph_timezone: str
+    cloudways_app_traffic_polling_enabled: bool
+    cloudways_app_traffic_duration: str
     monitored_server_ids: tuple[str, ...]
     monitored_app_ids: tuple[str, ...]
     dashboard_username: str
@@ -47,18 +54,53 @@ class Settings:
         settings = cls(
             app_env=_optional(source, "APP_ENV", "production"),
             app_host=_optional(source, "APP_HOST", "0.0.0.0"),
-            app_port=_positive_int(source, "APP_PORT", 8000),
+            app_port=_positive_int(source, "APP_PORT", 8083),
             dashboard_base_url=_required(source, "DASHBOARD_BASE_URL"),
             sqlite_path=_required(source, "SQLITE_PATH"),
             poll_interval_seconds=_positive_int(source, "POLL_INTERVAL_SECONDS", 60),
-            stale_after_seconds=_positive_int(source, "STALE_AFTER_SECONDS", 180),
+            stale_after_seconds=_positive_int(source, "STALE_AFTER_SECONDS", 600),
             retention_days=_positive_int(source, "RETENTION_DAYS", 30),
             cloudways_email=_required(source, "CLOUDWAYS_EMAIL"),
             cloudways_api_key=_required(source, "CLOUDWAYS_API_KEY"),
             cloudways_api_base_url=_optional(
                 source,
                 "CLOUDWAYS_API_BASE_URL",
-                "https://api.cloudways.com/api/v1",
+                "https://api.cloudways.com/api/v2",
+            ),
+            cloudways_task_polling_enabled=_bool(
+                source,
+                "CLOUDWAYS_TASK_POLLING_ENABLED",
+                True,
+            ),
+            cloudways_task_poll_attempts=_positive_int(
+                source,
+                "CLOUDWAYS_TASK_POLL_ATTEMPTS",
+                1,
+            ),
+            cloudways_task_poll_interval_seconds=_non_negative_float(
+                source,
+                "CLOUDWAYS_TASK_POLL_INTERVAL_SECONDS",
+                0.0,
+            ),
+            cloudways_monitor_graph_duration=_optional(
+                source,
+                "CLOUDWAYS_MONITOR_GRAPH_DURATION",
+                "1 Hour",
+            ),
+            cloudways_monitor_graph_timezone=_optional(
+                source,
+                "CLOUDWAYS_MONITOR_GRAPH_TIMEZONE",
+                "UTC",
+            ),
+            cloudways_app_traffic_polling_enabled=_bool(
+                source,
+                "CLOUDWAYS_APP_TRAFFIC_POLLING_ENABLED",
+                True,
+            ),
+            cloudways_app_traffic_duration=_optional(
+                source,
+                "CLOUDWAYS_APP_TRAFFIC_DURATION",
+                "1h",
             ),
             monitored_server_ids=_csv(source, "MONITORED_SERVER_IDS"),
             monitored_app_ids=_csv(source, "MONITORED_APP_IDS"),
@@ -89,6 +131,11 @@ class Settings:
         settings._validate()
         return settings
 
+    @property
+    def effective_stale_after_seconds(self) -> int:
+        if not self.cloudways_task_polling_enabled:
+            return self.stale_after_seconds
+        return max(self.stale_after_seconds, self.poll_interval_seconds * 10)
     def public_summary(self) -> dict[str, object]:
         return {
             "app_env": self.app_env,
@@ -98,10 +145,26 @@ class Settings:
             "sqlite_path": self.sqlite_path,
             "poll_interval_seconds": self.poll_interval_seconds,
             "stale_after_seconds": self.stale_after_seconds,
+            "effective_stale_after_seconds": self.effective_stale_after_seconds,
             "retention_days": self.retention_days,
             "cloudways_email": self.cloudways_email,
             "cloudways_api_base_url": self.cloudways_api_base_url,
             "cloudways_api_key_configured": bool(self.cloudways_api_key),
+            "cloudways_task_polling_enabled": self.cloudways_task_polling_enabled,
+            "cloudways_task_poll_attempts": self.cloudways_task_poll_attempts,
+            "cloudways_task_poll_interval_seconds": (
+                self.cloudways_task_poll_interval_seconds
+            ),
+            "cloudways_monitor_graph_duration": (
+                self.cloudways_monitor_graph_duration
+            ),
+            "cloudways_monitor_graph_timezone": (
+                self.cloudways_monitor_graph_timezone
+            ),
+            "cloudways_app_traffic_polling_enabled": (
+                self.cloudways_app_traffic_polling_enabled
+            ),
+            "cloudways_app_traffic_duration": self.cloudways_app_traffic_duration,
             "monitored_server_ids": self.monitored_server_ids,
             "monitored_app_ids": self.monitored_app_ids,
             "dashboard_username": self.dashboard_username,
@@ -125,6 +188,18 @@ class Settings:
         _require_http_url("DASHBOARD_BASE_URL", self.dashboard_base_url)
         _require_http_url("CLOUDWAYS_API_BASE_URL", self.cloudways_api_base_url)
         _require_min_length("SESSION_SECRET", self.session_secret, 16)
+        _require_value(
+            "CLOUDWAYS_MONITOR_GRAPH_DURATION",
+            self.cloudways_monitor_graph_duration,
+        )
+        _require_value(
+            "CLOUDWAYS_MONITOR_GRAPH_TIMEZONE",
+            self.cloudways_monitor_graph_timezone,
+        )
+        _require_value(
+            "CLOUDWAYS_APP_TRAFFIC_DURATION",
+            self.cloudways_app_traffic_duration,
+        )
         _require_ordered_thresholds(
             "CPU",
             self.cpu_warning_percent,
@@ -174,6 +249,17 @@ def _positive_int(source: Mapping[str, str], key: str, default: int) -> int:
         raise SettingsError(f"{key} must be an integer") from exc
     if value <= 0:
         raise SettingsError(f"{key} must be greater than zero")
+    return value
+
+
+def _non_negative_float(source: Mapping[str, str], key: str, default: float) -> float:
+    raw_value = _optional(source, key, str(default))
+    try:
+        value = float(raw_value)
+    except ValueError as exc:
+        raise SettingsError(f"{key} must be a number") from exc
+    if value < 0:
+        raise SettingsError(f"{key} must be greater than or equal to zero")
     return value
 
 

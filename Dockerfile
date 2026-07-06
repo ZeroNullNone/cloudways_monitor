@@ -19,6 +19,6 @@ RUN pip install --no-cache-dir .
 
 COPY --from=frontend /app/frontend/dist ./frontend/dist
 
-EXPOSE 8000
+EXPOSE 8083
 
-CMD ["uvicorn", "cloudways_monitor.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "cloudways_monitor.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8083"]

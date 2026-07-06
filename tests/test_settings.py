@@ -8,7 +8,7 @@ from tests.helpers import valid_env
 def test_settings_from_env_parses_typed_values() -> None:
     settings = Settings.from_env(valid_env())
 
-    assert settings.app_port == 8000
+    assert settings.app_port == 8083
     assert settings.poll_interval_seconds == 60
     assert settings.stale_after_seconds == 180
     assert settings.retention_days == 30
@@ -18,6 +18,30 @@ def test_settings_from_env_parses_typed_values() -> None:
     assert settings.monitored_app_ids == ()
     assert settings.cpu_warning_percent == 80
     assert settings.disk_critical_percent == 90
+
+
+def test_settings_extends_effective_stale_window_for_cloudways_task_polling() -> None:
+    settings = Settings.from_env(
+        valid_env(
+            POLL_INTERVAL_SECONDS="60",
+            STALE_AFTER_SECONDS="180",
+            CLOUDWAYS_TASK_POLLING_ENABLED="true",
+        )
+    )
+
+    assert settings.effective_stale_after_seconds == 600
+
+
+def test_settings_preserves_stale_window_without_cloudways_task_polling() -> None:
+    settings = Settings.from_env(
+        valid_env(
+            POLL_INTERVAL_SECONDS="60",
+            STALE_AFTER_SECONDS="180",
+            CLOUDWAYS_TASK_POLLING_ENABLED="false",
+        )
+    )
+
+    assert settings.effective_stale_after_seconds == 180
 
 
 def test_settings_rejects_missing_required_values() -> None:

@@ -6,12 +6,12 @@ Date: 2026-07-05
 Build a private live dashboard for one Cloudways account that monitors server and application usage from the Cloudways API. The dashboard should show current health, recent history, and threshold-based alerts for CPU, RAM, storage, traffic, API freshness, and related application telemetry.
 
 ## Source of telemetry
-Cloudways API is the v1 source of truth. No SSH agent or server-side collector is installed on Cloudways servers.
+Cloudways Platform API v2 is the source of truth for v1 of this dashboard. No SSH agent or server-side collector is installed on Cloudways servers.
 
 Official Cloudways API areas relevant to v1:
 
 - Authentication: OAuth access token, sent as a bearer token.
-- Discovery: server list and app list.
+- Discovery: server list, including nested live applications.
 - Server telemetry: disk usage, monitoring graph, server monitor, server usage, services status.
 - Application telemetry: app disk usage, app disk usage graph, traffic, traffic detail, PHP, MySQL, running cron.
 - Failure handling: Cloudways documents standard JSON responses and HTTP errors including 400, 401, 403, 422, and 500.
@@ -26,7 +26,7 @@ In scope:
 - Auto-discovery with optional allowlists.
 - Read-only monitoring only.
 - 60-second polling.
-- 3-minute stale threshold.
+- Effective stale threshold of at least 10 polling intervals when Cloudways task polling is enabled.
 - 30 days of raw metric snapshots.
 - Overview-first dashboard with server and application drilldowns.
 - Threshold alerts with Telegram notifications.
@@ -111,7 +111,7 @@ Default thresholds:
 - CPU warning/critical: 80 percent / 95 percent.
 - RAM warning/critical: 80 percent / 95 percent.
 - Disk/storage warning/critical: 80 percent / 90 percent.
-- Stale telemetry: older than 3 minutes.
+- Stale telemetry: older than the effective freshness window; with Cloudways task polling enabled, this is at least 10 polling intervals.
 - Cloudways API sustained failure: 3 failed polls.
 - Bandwidth/traffic: chart only by default.
 

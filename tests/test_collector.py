@@ -106,6 +106,23 @@ class FakeNotifier:
         self.sent.append(notification)
 
 
+class SlowTelemetrySource(FakeTelemetrySource):
+    def __init__(self, clock: MutableClock) -> None:
+        self.clock = clock
+
+    def get_server_metrics(self, server_id: str) -> dict[str, Any]:
+        self.clock.current_time += timedelta(minutes=4)
+        return super().get_server_metrics(server_id)
+
+    def get_application_metrics(
+        self,
+        application_id: str,
+        server_id: str | None,
+    ) -> dict[str, Any]:
+        self.clock.current_time += timedelta(minutes=4)
+        return super().get_application_metrics(application_id, server_id)
+
+
 class FailingTelemetrySource(FakeTelemetrySource):
     def __init__(self) -> None:
         self.fail_discovery = False
@@ -203,6 +220,42 @@ def test_collector_run_once_discovers_allowed_resources_and_stores_snapshots(
     assert old_snapshot is None
 
 
+def test_collector_timestamps_each_snapshot_when_resource_collection_finishes(
+    tmp_path,
+) -> None:
+    now = datetime(2026, 7, 5, 1, 0, tzinfo=UTC)
+    settings = Settings.from_env(
+        valid_env(
+            SQLITE_PATH=str(tmp_path / "cloudways-monitor.sqlite3"),
+            MONITORED_SERVER_IDS="123",
+            MONITORED_APP_IDS="987",
+        )
+    )
+    storage = make_storage(settings)
+    clock = MutableClock(now)
+    collector = TelemetryCollector(
+        settings=settings,
+        storage=storage,
+        telemetry_source=SlowTelemetrySource(clock),
+        clock=clock,
+    )
+
+    health = collector.run_once()
+
+    resources = {
+        resource.provider_id: resource for resource in storage.list_resources()
+    }
+    server_snapshot = storage.get_latest_metric_snapshot(resources["123"].id)
+    app_snapshot = storage.get_latest_metric_snapshot(resources["987"].id)
+
+    assert server_snapshot is not None
+    assert app_snapshot is not None
+    assert server_snapshot.captured_at == now + timedelta(minutes=4)
+    assert app_snapshot.captured_at == now + timedelta(minutes=8)
+    assert health.last_run_at == now
+    assert health.last_success_at == now + timedelta(minutes=8)
+
+
 def test_collector_run_once_evaluates_alerts_for_stored_snapshots(tmp_path) -> None:
     now = datetime(2026, 7, 5, 1, 0, tzinfo=UTC)
     settings = Settings.from_env(
@@ -247,7 +300,7 @@ def test_collector_failure_preserves_last_known_snapshots_and_marks_stale(
     tmp_path,
 ) -> None:
     now = datetime(2026, 7, 5, 1, 0, tzinfo=UTC)
-    failure_time = now + timedelta(minutes=4)
+    failure_time = now + timedelta(minutes=11)
     settings = Settings.from_env(
         valid_env(
             SQLITE_PATH=str(tmp_path / "cloudways-monitor.sqlite3"),
@@ -348,7 +401,7 @@ def test_collector_health_endpoint_marks_aged_data_stale(tmp_path) -> None:
         clock=clock,
     )
     collector.run_once()
-    clock.current_time = now + timedelta(minutes=4)
+    clock.current_time = now + timedelta(minutes=11)
     client = TestClient(
         create_app(settings=settings, telemetry_collector=collector),
         base_url="https://testserver",

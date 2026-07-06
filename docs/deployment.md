@@ -5,16 +5,16 @@ The v1 production shape is one Docker container behind Caddy on the shared Digit
 ## Build and run
 
 1. Copy `.env.example` to `.env` on the droplet and fill in real values. Keep `SQLITE_PATH=/data/cloudways-monitor.sqlite3` so the database lives on the persistent volume.
-2. Build and start the service:
+2. Build and start the service. The script pulls the latest Git changes, backs up the existing SQLite database from the running container to `/backups/cloudways_monitor` when present, rebuilds, and restarts the service:
 
    ```bash
-   docker compose up -d --build
+   bash deploy.sh
    ```
 
 3. Confirm the backend health check from the droplet:
 
    ```bash
-   curl http://127.0.0.1:8000/health
+   curl http://127.0.0.1:8083/health
    ```
 
 4. Confirm the protected deployment diagnostics with a temporary cookie jar:
@@ -23,10 +23,10 @@ The v1 production shape is one Docker container behind Caddy on the shared Digit
    curl -c /tmp/cloudways-monitor.cookies \
      -H "Content-Type: application/json" \
      -d '{"username":"admin","password":"your-dashboard-password"}' \
-     http://127.0.0.1:8000/api/auth/login
+     http://127.0.0.1:8083/api/auth/login
 
    curl -b /tmp/cloudways-monitor.cookies \
-     http://127.0.0.1:8000/api/doctor
+     http://127.0.0.1:8083/api/doctor
    ```
 
 5. Check container logs if the doctor response is degraded:
@@ -41,7 +41,7 @@ Route your chosen subdomain to the loopback port published by Compose:
 
 ```caddyfile
 cloudways-monitor.example.com {
-    reverse_proxy 127.0.0.1:8000
+    reverse_proxy 127.0.0.1:8083
 }
 ```
 
@@ -49,7 +49,7 @@ If this service joins an existing Docker network with Caddy, remove the host por
 
 ```caddyfile
 cloudways-monitor.example.com {
-    reverse_proxy cloudways-monitor:8000
+    reverse_proxy cloudways-monitor:8083
 }
 ```
 

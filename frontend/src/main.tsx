@@ -20,7 +20,11 @@ type LatestMetrics = {
   captured_at: string | null;
   stale: boolean;
   cpu_percent: number | null;
+  ram_used_mb: number | null;
+  ram_total_mb: number | null;
   ram_percent: number | null;
+  disk_used_gb: number | null;
+  disk_total_gb: number | null;
   disk_percent: number | null;
   bandwidth_bytes: number | null;
   traffic_requests: number | null;
@@ -92,7 +96,11 @@ type ResourceDetailPayload = {
 type SeriesPoint = {
   captured_at: string;
   cpu_percent: number | null;
+  ram_used_mb: number | null;
+  ram_total_mb: number | null;
   ram_percent: number | null;
+  disk_used_gb: number | null;
+  disk_total_gb: number | null;
   disk_percent: number | null;
   bandwidth_bytes: number | null;
   traffic_requests: number | null;
@@ -170,7 +178,7 @@ function App() {
   if (auth === null) {
     return (
       <main className="shell shell-center">
-        <p className="loading">Checking session</p>
+        <p className="loading">[ AUTH HANDSHAKE ] Checking session</p>
       </main>
     );
   }
@@ -224,10 +232,14 @@ function LoginView({
 
   return (
     <main className="auth-shell">
-      <form className="login-panel" onSubmit={submit}>
-        <div>
+      <a className="skip-link" href="#login-form">
+        Skip to login form
+      </a>
+      <form className="login-panel" id="login-form" onSubmit={submit}>
+        <div className="login-header">
           <p className="eyebrow">Cloudways Monitor</p>
-          <h1>Sign in</h1>
+          <h1>Access terminal</h1>
+          <samp>AUTH / SINGLE OPERATOR / REV 01</samp>
         </div>
         <label>
           Username
@@ -246,9 +258,9 @@ function LoginView({
             onChange={(event) => setPassword(event.target.value)}
           />
         </label>
-        {error ? <p className="form-error">{error}</p> : null}
+        {error ? <p className="form-error">AUTH FAILED // {error}</p> : null}
         <button type="submit" disabled={submitting}>
-          {submitting ? "Signing in" : "Sign in"}
+          {submitting ? "Verifying" : "Enter dashboard"}
         </button>
       </form>
     </main>
@@ -268,6 +280,9 @@ function DashboardShell({
 }) {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [resources, setResources] = useState<ResourceSummary[]>([]);
+  const [expandedServerIds, setExpandedServerIds] = useState<Set<number>>(
+    () => new Set(),
+  );
   const [selectedResourceId, setSelectedResourceId] = useState<number | null>(
     parseResourceId(path),
   );
@@ -386,24 +401,57 @@ function DashboardShell({
     setPath(nextPath);
   }
 
+  function selectServer(resourceId: number) {
+    setExpandedServerIds((current) => {
+      const next = new Set(current);
+      if (next.has(resourceId)) {
+        next.delete(resourceId);
+      } else {
+        next.add(resourceId);
+      }
+      return next;
+    });
+    selectResource(resourceId);
+  }
+
   const selectedResource = detail?.resource ?? findResource(resources, selectedResourceId);
+  const resourceCount = resources.length;
 
   return (
-    <main className="shell">
+    <main className="shell" id="dashboard-main">
+      <a className="skip-link" href="#resource-dashboard">
+        Skip to telemetry grid
+      </a>
       <nav className="topbar">
-        <div>
+        <div className="masthead">
           <p className="eyebrow">Cloudways Monitor</p>
           <h1>Live telemetry</h1>
+          <dl className="terminal-strip" aria-label="Dashboard metadata">
+            <div>
+              <dt>operator</dt>
+              <dd>{auth.username}</dd>
+            </div>
+            <div>
+              <dt>resources</dt>
+              <dd>
+                <data value={resourceCount}>{resourceCount}</data>
+              </dd>
+            </div>
+            <div>
+              <dt>stream</dt>
+              <dd>SSE / armed</dd>
+            </div>
+          </dl>
         </div>
         <div className="account">
-          <span>{auth.username}</span>
+          <span>UNIT / {auth.username}</span>
           <button type="button" onClick={logout}>
             Logout
           </button>
         </div>
       </nav>
 
-      {error ? <p className="app-error">{error}</p> : null}
+      {error ? <p className="app-error">FAULT // {error}</p> : null}
 
       <AttentionBand
         lastRefresh={lastRefresh}
@@ -411,12 +459,18 @@ function DashboardShell({
         overview={overview}
       />
 
-      <section className="workspace" aria-label="Resource dashboard">
+      <section
+        className="workspace"
+        id="resource-dashboard"
+        aria-label="Resource dashboard"
+      >
         <ResourceNavigator
+          expandedServerIds={expandedServerIds}
+          onSelect={selectResource}
+          onServerSelect={selectServer}
           resources={resources}
           selectedResourceId={selectedResourceId}
           servers={overview?.servers ?? []}
-          onSelect={selectResource}
         />
         <ResourceDrilldown
           detail={detail}
@@ -449,10 +503,12 @@ function AttentionBand({
   return (
     <section className={`attention-band attention-${status}`}>
       <div className="attention-copy">
-        <p className="eyebrow">Attention</p>
-        <h2>{status === "needs_attention" ? "Needs attention" : "Systems normal"}</h2>
+        <p className="eyebrow">[ Attention ]</p>
+        <h2>
+          {status === "needs_attention" ? "Faults detected" : "Systems normal"}
+        </h2>
         <span className="refresh-time">
-          {loading ? "Refreshing" : `Updated ${formatDateTime(lastRefresh)}`}
+          {loading ? "Polling telemetry" : `Updated ${formatDateTime(lastRefresh)}`}
         </span>
       </div>
       <div className="attention-facts" aria-label="Dashboard status counts">
@@ -477,14 +533,14 @@ function StatusFact({
   return (
     <div className={`status-fact tone-${tone}`}>
       <span>{label}</span>
-      <strong>{value}</strong>
+      <output>{value}</output>
     </div>
   );
 }
 
 function AlertList({ alerts }: { alerts: OverviewAlert[] }) {
   if (alerts.length === 0) {
-    return <p className="quiet-line">No active alerts</p>;
+    return <p className="quiet-line">[ CLEAR ] No active alerts</p>;
   }
 
   return (
@@ -504,12 +560,16 @@ function AlertList({ alerts }: { alerts: OverviewAlert[] }) {
 }
 
 function ResourceNavigator({
+  expandedServerIds,
   onSelect,
+  onServerSelect,
   resources,
   selectedResourceId,
   servers,
 }: {
+  expandedServerIds: Set<number>;
   onSelect: (resourceId: number) => void;
+  onServerSelect: (resourceId: number) => void;
   resources: ResourceSummary[];
   selectedResourceId: number | null;
   servers: ResourceSummary[];
@@ -518,35 +578,48 @@ function ResourceNavigator({
   if (!hasGroupedResources && resources.length === 0) {
     return (
       <aside className="resource-nav">
-        <p className="panel-title">Resources</p>
-        <p className="quiet-line">Waiting for discovery</p>
+        <p className="panel-title">[ Resources ]</p>
+        <div className="empty-state">
+          <strong>No resources indexed</strong>
+          <p>Discovery has not reported a server or application yet.</p>
+        </div>
       </aside>
     );
   }
 
   return (
     <aside className="resource-nav">
-      <p className="panel-title">Resources</p>
+      <p className="panel-title">[ Resources ]</p>
       <div className="resource-stack">
         {hasGroupedResources
-          ? servers.map((server) => (
-              <div className="resource-group" key={server.id}>
-                <ResourceButton
-                  onSelect={onSelect}
-                  resource={server}
-                  selectedResourceId={selectedResourceId}
-                />
-                {(server.applications ?? []).map((application) => (
+          ? servers.map((server) => {
+              const applications = server.applications ?? [];
+              const expanded = expandedServerIds.has(server.id);
+              return (
+                <div className="resource-group" key={server.id}>
                   <ResourceButton
-                    application
-                    key={application.id}
-                    onSelect={onSelect}
-                    resource={application}
+                    childCount={applications.length}
+                    expanded={expanded}
+                    onSelect={onServerSelect}
+                    resource={server}
                     selectedResourceId={selectedResourceId}
                   />
-                ))}
-              </div>
-            ))
+                  {expanded ? (
+                    <div className="resource-children">
+                      {applications.map((application) => (
+                        <ResourceButton
+                          application
+                          key={application.id}
+                          onSelect={onSelect}
+                          resource={application}
+                          selectedResourceId={selectedResourceId}
+                        />
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })
           : resources.map((resource) => (
               <ResourceButton
                 key={resource.id}
@@ -562,27 +635,44 @@ function ResourceNavigator({
 
 function ResourceButton({
   application = false,
+  childCount = 0,
+  expanded = false,
   onSelect,
   resource,
   selectedResourceId,
 }: {
   application?: boolean;
+  childCount?: number;
+  expanded?: boolean;
   onSelect: (resourceId: number) => void;
   resource: ResourceSummary;
   selectedResourceId: number | null;
 }) {
   return (
     <button
+      aria-expanded={!application && childCount > 0 ? expanded : undefined}
       className={`resource-button${application ? " application-resource" : ""}`}
       data-active={resource.id === selectedResourceId}
+      data-expanded={!application && childCount > 0 ? expanded : undefined}
       onClick={() => onSelect(resource.id)}
       type="button"
     >
       <span>
         <strong>{resource.name}</strong>
-        <small>{resource.resource_type}</small>
+        <small>
+          {application ? "APP" : "SRV"} / {resource.resource_type}
+        </small>
       </span>
-      <HealthPill resource={resource} />
+      <span className="resource-action">
+        <HealthPill resource={resource} />
+        {!application && childCount > 0 ? (
+          <span className="collapse-indicator" aria-hidden="true">
+            <svg className="collapse-icon" viewBox="0 0 16 16">
+              <path d="M6 3.5 10.5 8 6 12.5" />
+            </svg>
+          </span>
+        ) : null}
+      </span>
     </button>
   );
 }
@@ -607,8 +697,11 @@ function ResourceDrilldown({
   if (!selectedResource) {
     return (
       <section className="detail-pane">
-        <p className="panel-title">Resource detail</p>
-        <p className="quiet-line">Waiting for resources</p>
+        <p className="panel-title">[ Resource detail ]</p>
+        <div className="empty-state">
+          <strong>No target selected</strong>
+          <p>Telemetry panes arm after discovery returns a monitored resource.</p>
+        </div>
       </section>
     );
   }
@@ -617,35 +710,44 @@ function ResourceDrilldown({
     <section className="detail-pane">
       <div className="detail-header">
         <div>
-          <p className="eyebrow">{selectedResource.resource_type}</p>
+          <p className="eyebrow">[ {selectedResource.resource_type} ]</p>
           <h2>{selectedResource.name}</h2>
           {detail?.parent_server ? (
             <span className="refresh-time">Parent: {detail.parent_server.name}</span>
           ) : null}
         </div>
-        <HealthPill resource={selectedResource} />
+        <div className="detail-status">
+          <HealthPill resource={selectedResource} />
+          <span className="captured-stamp">
+            Captured {formatDateTime(selectedResource.latest.captured_at)}
+          </span>
+        </div>
       </div>
 
-      <MetricGrid latest={selectedResource.latest} />
+      <MetricGrid
+        latest={selectedResource.latest}
+        parentLatest={detail?.parent_server?.latest ?? null}
+        resourceType={selectedResource.resource_type}
+      />
 
       <section className="trend-section">
         <div className="section-heading">
           <div>
-            <p className="panel-title">Resource trend</p>
+            <p className="panel-title">[ Resource trend ]</p>
             <span className="refresh-time">
               {series ? `${formatDateTime(series.range.start)} to ${formatDateTime(series.range.end)}` : "Loading"}
             </span>
           </div>
           <RangeSelector range={range} onRangeChange={onRangeChange} />
         </div>
-        {loading ? <p className="quiet-line">Loading resource telemetry</p> : null}
+        {loading ? <p className="quiet-line">[ SYNC ] Loading resource telemetry</p> : null}
         <TrendChart points={series?.points ?? []} />
       </section>
 
       <section className="raw-section">
         <div className="section-heading">
           <div>
-            <p className="panel-title">Raw latest payload</p>
+            <p className="panel-title">[ Raw latest payload ]</p>
             <span className="refresh-time">
               {rawLatest ? formatDateTime(rawLatest.snapshot.captured_at) : "No raw payload"}
             </span>
@@ -662,15 +764,23 @@ function ResourceDrilldown({
   );
 }
 
-function MetricGrid({ latest }: { latest: LatestMetrics }) {
+function MetricGrid({
+  latest,
+  parentLatest,
+  resourceType,
+}: {
+  latest: LatestMetrics;
+  parentLatest: LatestMetrics | null;
+  resourceType: ResourceType;
+}) {
+  const infrastructureLatest = resourceType === "application" && parentLatest ? parentLatest : latest;
   return (
     <div className="metric-grid">
-      <MetricTile label="CPU" value={formatPercent(latest.cpu_percent)} stale={latest.stale} />
-      <MetricTile label="RAM" value={formatPercent(latest.ram_percent)} stale={latest.stale} />
-      <MetricTile label="Disk" value={formatPercent(latest.disk_percent)} stale={latest.stale} />
+      <MetricTile label="CPU" value={formatPercent(infrastructureLatest.cpu_percent)} stale={infrastructureLatest.stale} />
+      <MetricTile label="RAM" value={formatRamMetric(infrastructureLatest)} stale={infrastructureLatest.stale} />
+      <MetricTile label="Disk" value={formatDiskMetric(latest)} stale={latest.stale} />
       <MetricTile label="Bandwidth" value={formatBytes(latest.bandwidth_bytes)} stale={latest.stale} />
       <MetricTile label="Traffic" value={formatNumber(latest.traffic_requests)} stale={latest.stale} />
-      <MetricTile label="Captured" value={formatDateTime(latest.captured_at)} stale={latest.stale} />
     </div>
   );
 }
@@ -687,8 +797,8 @@ function MetricTile({
   return (
     <div className="metric-tile" data-stale={stale}>
       <span>{label}</span>
-      <strong>{value}</strong>
-      {stale ? <small>stale</small> : null}
+      <output>{value}</output>
+      {stale ? <small>STALE / NO SIGNAL</small> : null}
     </div>
   );
 }
@@ -728,7 +838,10 @@ function TrendChart({ points }: { points: SeriesPoint[] }) {
   const visibleSeries = series.filter((line) => line.path.length > 0);
 
   if (points.length === 0 || visibleSeries.length === 0) {
-    return <p className="quiet-line">No points in this range</p>;
+    return <div className="empty-state chart-empty">
+        <strong>No plotted points</strong>
+        <p>The selected range has no CPU, RAM, or disk samples.</p>
+      </div>;
   }
 
   return (
@@ -762,12 +875,12 @@ function TrendChart({ points }: { points: SeriesPoint[] }) {
 
 function HealthPill({ resource }: { resource: ResourceSummary }) {
   if (resource.alerts.length > 0) {
-    return <span className="pill pill-danger">alert</span>;
+    return <span className="pill pill-danger">ALERT</span>;
   }
   if (resource.latest.stale) {
-    return <span className="pill pill-warning">stale</span>;
+    return <span className="pill pill-warning">STALE</span>;
   }
-  return <span className="pill pill-ok">live</span>;
+  return <span className="pill pill-ok">LIVE</span>;
 }
 
 async function fetchJson<T>(url: string): Promise<T> {
@@ -832,6 +945,26 @@ function buildLine(
     .join(" ");
 
   return { key: key.replace("_percent", ""), label, path };
+}
+
+function formatRamMetric(latest: LatestMetrics): string {
+  if (latest.ram_percent !== null) {
+    return formatPercent(latest.ram_percent);
+  }
+  if (latest.ram_used_mb !== null) {
+    return formatBytes(latest.ram_used_mb * 1024 * 1024);
+  }
+  return "No data";
+}
+
+function formatDiskMetric(latest: LatestMetrics): string {
+  if (latest.disk_percent !== null) {
+    return formatPercent(latest.disk_percent);
+  }
+  if (latest.disk_used_gb !== null) {
+    return formatBytes(latest.disk_used_gb * 1024 * 1024 * 1024);
+  }
+  return "No data";
 }
 
 function formatPercent(value: number | null): string {

@@ -95,6 +95,29 @@ def test_signed_session_tokens_expire(monkeypatch) -> None:
         is None
     )
 
+def test_password_hash_accepts_docker_safe_colon_format() -> None:
+    password_hash = (
+        "pbkdf2_sha256:100000:testsalt:UYD0wkzOSvbNmj2QVVu1KD-huSLvgW5ND4OieCuF9a0"
+    )
+
+    assert auth.verify_password(
+        password="correct-password",
+        password_hash=password_hash,
+    )
+    assert not auth.verify_password(
+        password="wrong-password",
+        password_hash=password_hash,
+    )
+
+def test_hash_password_generates_docker_safe_verifiable_hash() -> None:
+    password_hash = auth.hash_password("correct-password")
+
+    assert "$" not in password_hash
+    assert auth.verify_password(
+        password="correct-password",
+        password_hash=password_hash,
+    )
+
 def test_login_rejects_invalid_credentials(tmp_path) -> None:
     settings = Settings.from_env(
         valid_env(

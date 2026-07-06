@@ -10,7 +10,7 @@ def valid_env(**overrides: str) -> dict[str, str]:
     values = {
         "APP_ENV": "production",
         "APP_HOST": "0.0.0.0",
-        "APP_PORT": "8000",
+        "APP_PORT": "8083",
         "DASHBOARD_BASE_URL": "https://monitor.example.com",
         "SQLITE_PATH": "/data/cloudways-monitor.sqlite3",
         "POLL_INTERVAL_SECONDS": "60",
@@ -18,7 +18,7 @@ def valid_env(**overrides: str) -> dict[str, str]:
         "RETENTION_DAYS": "30",
         "CLOUDWAYS_EMAIL": "owner@example.com",
         "CLOUDWAYS_API_KEY": "cloudways-key",
-        "CLOUDWAYS_API_BASE_URL": "https://api.cloudways.com/api/v1",
+        "CLOUDWAYS_API_BASE_URL": "https://api.cloudways.com/api/v2",
         "MONITORED_SERVER_IDS": "123,456",
         "MONITORED_APP_IDS": "",
         "DASHBOARD_USERNAME": "admin",

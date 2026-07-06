@@ -22,6 +22,6 @@ Alert rules are configured outside the UI in deployment configuration for v1. Th
 ## Cloudways API failure behavior
 When the Cloudways API is unavailable, rate-limited, or otherwise fails, the dashboard should continue serving the last known telemetry, mark affected telemetry as stale, expose collector health, and notify through Telegram only after sustained failure. Missing telemetry must not be treated as zero usage.
 ## Default alert thresholds
-The v1 default thresholds are CPU warning/critical at 80%/95%, RAM warning/critical at 80%/95%, disk or storage warning/critical at 80%/90%, stale telemetry after 3 minutes, and sustained Cloudways API failure after 3 failed polls. Bandwidth and traffic are charted by default without a default alert threshold.
+The v1 default thresholds are CPU warning/critical at 80%/95%, RAM warning/critical at 80%/95%, disk or storage warning/critical at 80%/90%, stale telemetry after the effective freshness window, and sustained Cloudways API failure after 3 failed polls. Bandwidth and traffic are charted by default without a default alert threshold.
 ## Actionable Telegram notifications
 Telegram alert messages should include the resource name, severity, breached metric, current value, threshold, breach duration, and a link to the relevant dashboard drilldown using the configured dashboard base URL.
