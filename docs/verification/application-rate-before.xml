@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="3" skipped="0" tests="3" time="1.668" timestamp="2026-10-07T00:10:38.355397+08:00" hostname="Louis-PC"><testcase classname="tests.test_redesign_e2e" name="test_completed_application_requests_refresh_at_most_every_five_minutes" time="0.338"><failure message="assert 4 == 2&#10; +  where 4 = sum(&lt;generator object test_completed_application_requests_refresh_at_most_every_five_minutes.&lt;locals&gt;.&lt;genexpr&gt; at 0x000002100A6A6810&gt;)">tests\test_redesign_e2e.py:518: in test_completed_application_requests_refresh_at_most_every_five_minutes
+    assert sum(path == "/app/analytics/traffic" for path, _ in upstream.calls) == before
+E   assert 4 == 2
+E    +  where 4 = sum(&lt;generator object test_completed_application_requests_refresh_at_most_every_five_minutes.&lt;locals&gt;.&lt;genexpr&gt; at 0x000002100A6A6810&gt;)</failure></testcase><testcase classname="tests.test_redesign_e2e" name="test_traffic_endpoint_rate_limit_preserves_completed_counts_and_other_metrics" time="0.284"><failure message="assert 0 == 3&#10; +  where 0 = len([])">tests\test_redesign_e2e.py:553: in test_traffic_endpoint_rate_limit_preserves_completed_counts_and_other_metrics
+    assert len(server["latest"]["metrics"]) == 3
+E   assert 0 == 3
+E    +  where 0 = len([])</failure></testcase><testcase classname="tests.test_redesign_e2e" name="test_rate_limited_application_count_is_not_reused_after_expiry" time="0.271"><failure message="KeyError: 'traffic_status'">tests\test_redesign_e2e.py:592: in test_rate_limited_application_count_is_not_reused_after_expiry
+    assert latest["traffic_status"] == "rate_limited"
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'traffic_status'</failure></testcase></testsuite></testsuites>

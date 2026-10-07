@@ -1,0 +1,32 @@
+[
+  {
+    "label": "local overview",
+    "seconds": 0.028,
+    "status": 200
+  },
+  {
+    "label": "local catalog",
+    "seconds": 28.592,
+    "status": 200
+  },
+  {
+    "label": "local graph 12 Hours",
+    "seconds": 13.227,
+    "status": 200
+  },
+  {
+    "label": "local graph 12 Hours",
+    "seconds": 13.11,
+    "status": 200
+  },
+  {
+    "label": "local graph 7 Days",
+    "seconds": 7.261,
+    "status": 200
+  },
+  {
+    "label": "direct Cloudways graph",
+    "seconds": 0.684,
+    "status": 200
+  }
+]

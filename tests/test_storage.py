@@ -85,7 +85,10 @@ def test_storage_upserts_resources_and_queries_metric_snapshots(tmp_path) -> Non
     assert snapshots[0].cpu_percent == 41.5
     assert snapshots[0].raw_payload == {"cpu": 41.5}
 
-def make_snapshot(resource_id: int, captured_at: datetime, cpu: float) -> MetricSnapshot:
+
+def make_snapshot(
+    resource_id: int, captured_at: datetime, cpu: float
+) -> MetricSnapshot:
     return MetricSnapshot(
         resource_id=resource_id,
         resource_type="server",

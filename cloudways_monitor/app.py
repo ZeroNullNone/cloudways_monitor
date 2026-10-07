@@ -1,39 +1,34 @@
-from collections.abc import AsyncIterator
+from __future__ import annotations
+
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Callable, Literal
+from typing import Callable
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
-from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
 from starlette.staticfiles import StaticFiles
 
 from cloudways_monitor.alerts import AlertEvaluator, TelegramNotifier
 from cloudways_monitor.auth import (
-    AuthenticatedUser,
     SESSION_COOKIE_NAME,
     SESSION_MAX_AGE_SECONDS,
     create_session_token,
     verify_password,
     verify_session_token,
 )
-from cloudways_monitor.cloudways import CloudwaysClient
-from cloudways_monitor.collector import TelemetryCollector
-from cloudways_monitor.doctor import CloudwaysReadinessClient, Doctor
-from cloudways_monitor.settings import Settings, SettingsError
-from cloudways_monitor.storage import (
-    AlertEvent,
-    AlertState,
-    Database,
-    MetricSnapshot,
-    MonitoredResource,
-    Storage,
+from cloudways_monitor.cloudways import CloudwaysApiError, CloudwaysClient
+from cloudways_monitor.collector import CollectorHealth, TelemetryCollector
+from cloudways_monitor.doctor import Doctor
+from cloudways_monitor.monitor import (
+    value_in_unit,
+    latest_complete_point,
+    sample_is_stale,
 )
-
-
-DashboardRange = Literal["1h", "6h", "24h", "7d", "30d"]
+from cloudways_monitor.settings import Settings, SettingsError
+from cloudways_monitor.storage import Database, Storage
 
 
 class LoginRequest(BaseModel):
@@ -46,702 +41,395 @@ class RuntimeState:
     settings: Settings | None
     storage: Storage | None
     telemetry_collector: TelemetryCollector | None
-    cloudways_client: CloudwaysReadinessClient | None
+    cloudways_client: CloudwaysClient | None
+    notifier: TelegramNotifier | None = None
+    startup_error: str | None = None
 
 
 def create_app(
-    settings: Settings | None = None,
-    static_dir: str | Path | None = None,
-    cloudways_client: CloudwaysReadinessClient | None = None,
-    telemetry_collector: TelemetryCollector | None = None,
-    storage: Storage | None = None,
+    settings=None,
+    static_dir=None,
+    cloudways_client=None,
+    telemetry_collector=None,
+    storage=None,
     clock: Callable[[], datetime] | None = None,
 ) -> FastAPI:
-    runtime = RuntimeState(
-        settings=settings,
-        storage=storage,
-        telemetry_collector=telemetry_collector,
-        cloudways_client=cloudways_client,
+    runtime = RuntimeState(settings, storage, telemetry_collector, cloudways_client)
+    auto_start = all(
+        x is None for x in (settings, storage, telemetry_collector, cloudways_client)
     )
-    auto_start_collector = (
-        settings is None
-        and storage is None
-        and telemetry_collector is None
-        and cloudways_client is None
-    )
-    app = FastAPI(
-        title="Cloudways Monitor",
-        lifespan=_runtime_lifespan(runtime) if auto_start_collector else None,
-    )
+
+    @asynccontextmanager
+    async def lifespan(app):
+        if auto_start:
+            try:
+                runtime.settings = Settings.from_env()
+                runtime.storage = _make_storage(runtime.settings)
+                runtime.cloudways_client = CloudwaysClient(runtime.settings)
+                runtime.notifier = TelegramNotifier(settings=runtime.settings)
+                evaluator = AlertEvaluator(
+                    settings=runtime.settings,
+                    storage=runtime.storage,
+                    notifier=runtime.notifier,
+                )
+                runtime.telemetry_collector = TelemetryCollector(
+                    settings=runtime.settings,
+                    storage=runtime.storage,
+                    telemetry_source=runtime.cloudways_client,
+                    alert_evaluator=evaluator,
+                )
+                runtime.telemetry_collector.start()
+            except (SettingsError, OSError) as exc:
+                runtime.startup_error = str(exc)
+        try:
+            yield
+        finally:
+            if auto_start:
+                if runtime.telemetry_collector:
+                    runtime.telemetry_collector.stop()
+                if runtime.cloudways_client:
+                    runtime.cloudways_client.close()
+                if runtime.notifier:
+                    runtime.notifier.close()
+
+    app = FastAPI(title="Cloudways Monitor", lifespan=lifespan)
+
+    def config():
+        if runtime.settings is None:
+            try:
+                runtime.settings = Settings.from_env()
+            except SettingsError as exc:
+                raise HTTPException(503, str(exc)) from exc
+        return runtime.settings
+
+    def store():
+        if runtime.storage is None:
+            runtime.storage = _make_storage(config())
+        return runtime.storage
+
+    def source():
+        if runtime.cloudways_client is None:
+            raise HTTPException(
+                503, runtime.startup_error or "Cloudways collector is not initialized"
+            )
+        return runtime.cloudways_client
+
+    def current_alert_states(status=None):
+        targets = {rule.target for rule in config().alert_rules}
+        return [
+            state
+            for state in store().list_alert_states(status=status)
+            if state.rule_key in targets
+        ]
+
+    def user(request):
+        token = request.cookies.get(SESSION_COOKIE_NAME)
+        return (
+            verify_session_token(token=token, secret=config().session_secret)
+            if token
+            else None
+        )
+
+    def protected(request: Request):
+        if user(request) is None:
+            raise HTTPException(401, "Authentication required")
 
     @app.get("/health")
-    def health() -> dict[str, str]:
-        return {
-            "status": "ok",
-            "service": "cloudways-monitor",
-        }
+    def health():
+        return dict(status="ok", service="cloudways-monitor")
 
     @app.post("/api/auth/login")
-    def login(payload: LoginRequest, response: Response) -> dict[str, object]:
-        resolved_settings = _resolve_settings(settings)
-        valid_credentials = (
-            payload.username == resolved_settings.dashboard_username
-            and verify_password(
-                password=payload.password,
-                password_hash=resolved_settings.dashboard_password_hash,
-            )
-        )
-        if not valid_credentials:
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid username or password",
-            )
-
+    def login(payload: LoginRequest, response: Response):
+        cfg = config()
+        if payload.username != cfg.dashboard_username or not verify_password(
+            password=payload.password, password_hash=cfg.dashboard_password_hash
+        ):
+            raise HTTPException(401, "Invalid username or password")
         response.set_cookie(
-            key=SESSION_COOKIE_NAME,
-            value=create_session_token(
-                username=resolved_settings.dashboard_username,
-                secret=resolved_settings.session_secret,
+            SESSION_COOKIE_NAME,
+            create_session_token(
+                username=cfg.dashboard_username, secret=cfg.session_secret
             ),
             max_age=SESSION_MAX_AGE_SECONDS,
             httponly=True,
-            secure=resolved_settings.session_cookie_secure,
+            secure=cfg.session_cookie_secure,
             samesite="lax",
         )
-        return {
-            "authenticated": True,
-            "username": resolved_settings.dashboard_username,
-        }
+        return dict(authenticated=True, username=cfg.dashboard_username)
 
     @app.post("/api/auth/logout")
-    def logout(response: Response) -> dict[str, object]:
-        resolved_settings = _resolve_settings(settings)
+    def logout(response: Response):
         response.delete_cookie(
-            key=SESSION_COOKIE_NAME,
+            SESSION_COOKIE_NAME,
             httponly=True,
-            secure=resolved_settings.session_cookie_secure,
+            secure=config().session_cookie_secure,
             samesite="lax",
         )
-        return {"authenticated": False, "username": None}
+        return dict(authenticated=False, username=None)
 
     @app.get("/api/auth/me")
-    def me(request: Request) -> dict[str, object]:
-        user = _current_user(request, runtime.settings)
-        if user is None:
-            return {"authenticated": False, "username": None}
-        return {"authenticated": True, "username": user.username}
-
-    def require_authenticated_user(request: Request) -> None:
-        if _current_user(request, settings) is None:
-            raise HTTPException(status_code=401, detail="Authentication required")
-
-    @app.get("/api/collector/health")
-    def collector_health(
-        _authenticated: None = Depends(require_authenticated_user),
-    ) -> dict[str, object]:
-        return _collector_health_to_dict(runtime.telemetry_collector)
-
-    @app.get("/api/overview")
-    def overview(
-        _authenticated: None = Depends(require_authenticated_user),
-    ) -> dict[str, object]:
-        resolved_storage = _resolve_storage(runtime.storage, runtime.settings)
-        resolved_settings = _resolve_settings(settings)
-        return _overview_to_dict(
-            storage=resolved_storage,
-            settings=resolved_settings,
-            now=_current_time(clock),
-            collector=_collector_health_to_dict(runtime.telemetry_collector),
+    def me(request: Request):
+        current = user(request)
+        return dict(
+            authenticated=bool(current), username=current.username if current else None
         )
-    @app.get("/api/resources")
-    def resources(
-        _authenticated: None = Depends(require_authenticated_user),
-    ) -> dict[str, object]:
-        resolved_storage = _resolve_storage(runtime.storage, runtime.settings)
-        resolved_settings = _resolve_settings(settings)
-        now = _current_time(clock)
-        alerts_by_resource_id = _active_alerts_by_resource_id(resolved_storage)
-        return {
-            "resources": [
-                _resource_summary_to_dict(
-                    resource=resource,
-                    latest=resolved_storage.get_latest_metric_snapshot(resource.id),
-                    alerts=alerts_by_resource_id.get(resource.id, []),
-                    settings=resolved_settings,
-                    now=now,
-                )
-                for resource in _sorted_resources(resolved_storage.list_resources())
-            ]
-        }
 
-    @app.get("/api/resources/{resource_id}")
-    def resource_detail(
+    @app.get("/api/collector/health", dependencies=[Depends(protected)])
+    def collector_health():
+        return (
+            runtime.telemetry_collector.health.as_dict()
+            if runtime.telemetry_collector
+            else CollectorHealth().as_dict()
+        )
+
+    @app.get("/api/monitor/catalog", dependencies=[Depends(protected)])
+    def monitor_catalog():
+        try:
+            return source().monitor_catalog()
+        except CloudwaysApiError as exc:
+            raise HTTPException(503, str(exc)) from exc
+
+    @app.get("/api/servers/{resource_id}/graph", dependencies=[Depends(protected)])
+    def graph(
         resource_id: int,
-        _authenticated: None = Depends(require_authenticated_user),
-    ) -> dict[str, object]:
-        resolved_storage = _resolve_storage(runtime.storage, runtime.settings)
-        resolved_settings = _resolve_settings(settings)
-        now = _current_time(clock)
-        resource = resolved_storage.get_resource(resource_id)
-        if resource is None:
-            raise HTTPException(status_code=404, detail="Resource not found")
+        target: str = Query(max_length=120),
+        duration: str = Query(max_length=40),
+    ):
+        resource = store().get_resource(resource_id)
+        if resource is None or resource.resource_type != "server":
+            raise HTTPException(404, "Server not found")
+        try:
+            result = source().get_graph(resource.provider_id, target, duration)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except CloudwaysApiError as exc:
+            raise HTTPException(503, str(exc)) from exc
+        # Each requested window stores its full source series independently.
+        store().save_graph(resource.id, result)
+        return {k: v for k, v in result.items() if k != "raw"}
 
-        alerts_by_resource_id = _active_alerts_by_resource_id(resolved_storage)
-        parent_server = _parent_server_for(
-            resource=resource,
-            resources=resolved_storage.list_resources(),
-        )
-        return {
-            "resource": _resource_summary_to_dict(
-                resource=resource,
-                latest=resolved_storage.get_latest_metric_snapshot(resource.id),
-                alerts=alerts_by_resource_id.get(resource.id, []),
-                settings=resolved_settings,
-                now=now,
-            ),
-            "parent_server": None
-            if parent_server is None
-            else _resource_summary_to_dict(
-                resource=parent_server,
-                latest=resolved_storage.get_latest_metric_snapshot(parent_server.id),
-                alerts=alerts_by_resource_id.get(parent_server.id, []),
-                settings=resolved_settings,
-                now=now,
-            ),
-        }
-    @app.get("/api/resources/{resource_id}/series")
-    def resource_series(
-        resource_id: int,
-        range_key: Annotated[DashboardRange, Query(alias="range")] = "1h",
-        _authenticated: None = Depends(require_authenticated_user),
-    ) -> dict[str, object]:
-        resolved_storage = _resolve_storage(runtime.storage, runtime.settings)
-        resource = resolved_storage.get_resource(resource_id)
-        if resource is None:
-            raise HTTPException(status_code=404, detail="Resource not found")
-
-        end = _current_time(clock)
-        start = end - _range_delta(range_key)
-        snapshots = resolved_storage.list_metric_snapshots(
-            resource_id=resource_id,
-            start=start,
-            end=end,
-        )
-        return {
-            "resource": _resource_identity_to_dict(resource),
-            "range": {
-                "key": range_key,
-                "start": start.isoformat(),
-                "end": end.isoformat(),
-            },
-            "points": [_series_point_to_dict(snapshot) for snapshot in snapshots],
-        }
-    @app.get("/api/resources/{resource_id}/raw/latest")
-    def resource_raw_latest(
-        resource_id: int,
-        _authenticated: None = Depends(require_authenticated_user),
-    ) -> dict[str, object]:
-        resolved_storage = _resolve_storage(runtime.storage, runtime.settings)
-        resource = resolved_storage.get_resource(resource_id)
-        if resource is None:
-            raise HTTPException(status_code=404, detail="Resource not found")
-
-        snapshot = resolved_storage.get_latest_metric_snapshot(resource_id)
-        if snapshot is None:
-            raise HTTPException(status_code=404, detail="No metric snapshot found")
-
-        return {
-            "resource": _resource_identity_to_dict(resource),
-            "snapshot": _raw_snapshot_to_dict(snapshot),
-        }
-    @app.get("/api/alerts")
-    def alerts(
-        status: str | None = None,
-        _authenticated: None = Depends(require_authenticated_user),
-    ) -> dict[str, object]:
-        resolved_storage = _resolve_storage(runtime.storage, runtime.settings)
-        return {
-            "alerts": [
-                _alert_state_to_dict(alert)
-                for alert in resolved_storage.list_alert_states(status=status)
-            ]
-        }
-
-    @app.get("/api/alerts/events")
-    def alert_events(
-        limit: int = 100,
-        _authenticated: None = Depends(require_authenticated_user),
-    ) -> dict[str, object]:
-        resolved_storage = _resolve_storage(runtime.storage, runtime.settings)
-        return {
-            "events": [
-                _alert_event_to_dict(event)
-                for event in resolved_storage.list_alert_events(limit=limit)
-            ]
-        }
-
-    @app.get("/api/events")
-    def events(
-        _authenticated: None = Depends(require_authenticated_user),
-    ) -> StreamingResponse:
-        return StreamingResponse(
-            iter(['event: dashboard-refresh\ndata: {"type":"dashboard-refresh"}\n\n']),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache"},
-        )
-    @app.get("/api/doctor")
-    def doctor(
-        _authenticated: None = Depends(require_authenticated_user),
-    ) -> dict[str, object]:
-        resolved_settings = runtime.settings
-        resolved_cloudways_client = runtime.cloudways_client
-        if resolved_settings is None:
-            try:
-                resolved_settings = Settings.from_env()
-                if resolved_cloudways_client is None:
-                    resolved_cloudways_client = CloudwaysClient(resolved_settings)
-            except SettingsError as exc:
-                return {
-                    "status": "degraded",
-                    "checks": {
-                        "config": {
-                            "status": "error",
-                            "error": str(exc),
-                        },
-                        "sqlite": {
-                            "status": "skipped",
-                            "writable": False,
-                        },
-                    },
-                }
-        return Doctor(resolved_settings, resolved_cloudways_client).run()
-
-    resolved_static_dir = (
-        Path("frontend/dist") if static_dir is None else Path(static_dir)
+    @app.get(
+        "/api/applications/{resource_id}/analytics", dependencies=[Depends(protected)]
     )
-    _mount_static_ui(app, resolved_static_dir, settings)
+    def application_analytics(
+        resource_id: int,
+        category: str = Query(max_length=20),
+        duration: str = Query(max_length=10),
+    ):
+        resource = store().get_resource(resource_id)
+        if (
+            resource is None
+            or resource.resource_type != "application"
+            or not resource.parent_provider_id
+        ):
+            raise HTTPException(404, "Application not found")
+        try:
+            return source().get_application_analysis(
+                resource.provider_id, resource.parent_provider_id, category, duration
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.get("/api/overview", dependencies=[Depends(protected)])
+    def overview():
+        now = clock() if clock else datetime.now(UTC)
+        resources = store().list_resources()
+        states = current_alert_states()
+        alerts = [a for a in states if a.status == "active"]
+        pressure_alerts = [
+            a
+            for a in states
+            if a.status == "active"
+            or (a.status == "pending" and a.consecutive_breaches > 0)
+        ]
+        grouped = {}
+        servers = []
+        for resource in resources:
+            snapshot = store().get_latest_metric_snapshot(resource.id)
+            latest = dict(
+                fetched_at=snapshot.captured_at.isoformat() if snapshot else None,
+                stale=snapshot is None
+                or (now - snapshot.captured_at).total_seconds()
+                > config().stale_after_seconds,
+                diagnostics=snapshot.raw_payload.get("diagnostics", [])
+                if snapshot
+                else [],
+                metrics=[],
+            )
+            if snapshot:
+                raw = snapshot.raw_payload
+                if resource.resource_type == "server":
+                    if raw.get("capacity"):
+                        latest["capacity"] = raw["capacity"]
+                    for target, graph_payload in raw.get("graphs", {}).items():
+                        series = graph_payload.get("series", [])
+                        if (
+                            graph_payload.get("status") in ("ok", "warning")
+                            and len(series) == 1
+                        ):
+                            item = series[0]
+                            points = item["points"]
+                            point = latest_complete_point(points)
+                            if point:
+                                latest["metrics"].append(
+                                    dict(
+                                        target=target,
+                                        value=point["value"],
+                                        unit=item["unit"],
+                                        sample_at=point["timestamp"],
+                                        comparable_value=value_in_unit(
+                                            point["value"],
+                                            item["unit"],
+                                            "%" if target == "Idle CPU" else "MB",
+                                        ),
+                                        stale=sample_is_stale(
+                                            item, now, config().stale_after_seconds
+                                        ),
+                                    )
+                                )
+                else:
+                    for field in (
+                        "disk_used_gb",
+                        "traffic_requests",
+                        "bandwidth_status",
+                        "traffic_complete",
+                        "traffic_window",
+                        "traffic_status",
+                        "traffic_fetched_at",
+                        "disk_used_gb_sample_at",
+                    ):
+                        if raw.get(field) is not None:
+                            latest[field] = raw[field]
+            summary = dict(
+                id=resource.id,
+                provider_id=resource.provider_id,
+                resource_type=resource.resource_type,
+                name=resource.name,
+                parent_provider_id=resource.parent_provider_id,
+                metadata=resource.raw,
+                latest=latest,
+                alerts=[
+                    dict(
+                        id=a.id,
+                        rule_key=a.rule_key,
+                        severity=a.severity,
+                        status=a.status,
+                    )
+                    for a in pressure_alerts
+                    if a.resource_id == resource.id
+                ],
+            )
+            if resource.resource_type == "server":
+                summary["applications"] = []
+                servers.append(summary)
+            else:
+                grouped.setdefault(resource.parent_provider_id, []).append(summary)
+        for server in servers:
+            server["applications"] = grouped.pop(server["provider_id"], [])
+        stale_count = sum(s["latest"]["stale"] for s in servers) + sum(
+            a["latest"]["stale"] for s in servers for a in s["applications"]
+        )
+        return dict(
+            servers=servers,
+            unassociated_applications=[a for apps in grouped.values() for a in apps],
+            collector=collector_health(),
+            attention=dict(
+                status="needs_attention" if alerts or stale_count else "ok",
+                active_alert_count=len(alerts),
+                stale_resource_count=stale_count,
+            ),
+            telegram_enabled=config().telegram_enabled,
+            timezone="UTC+8",
+            refresh_seconds=config().poll_interval_seconds,
+            active_alerts=[
+                dict(
+                    id=a.id,
+                    resource_id=a.resource_id,
+                    rule_key=a.rule_key,
+                    severity=a.severity,
+                    opened_at=_iso(a.opened_at),
+                )
+                for a in alerts
+            ],
+        )
+
+    @app.get(
+        "/api/resources/{resource_id}/diagnostics", dependencies=[Depends(protected)]
+    )
+    def diagnostics(resource_id: int):
+        resource = store().get_resource(resource_id)
+        if resource is None:
+            raise HTTPException(404, "Resource not found")
+        snapshot = store().get_latest_metric_snapshot(resource_id)
+        graphs = {}
+        if snapshot:
+            for target, graph_payload in snapshot.raw_payload.get("graphs", {}).items():
+                graphs[target] = store().get_graph(
+                    resource_id, target, graph_payload["duration"]
+                )
+        return dict(
+            resource_id=resource_id,
+            fetched_at=snapshot.captured_at.isoformat() if snapshot else None,
+            payload=snapshot.raw_payload if snapshot else None,
+            graphs=graphs,
+        )
+
+    @app.get("/api/alerts", dependencies=[Depends(protected)])
+    def alerts(status: str | None = None):
+        return dict(
+            alerts=[
+                {
+                    k: _iso(v) if isinstance(v, datetime) else v
+                    for k, v in vars(a).items()
+                }
+                for a in current_alert_states(status=status)
+            ]
+        )
+
+    @app.get("/api/alerts/events", dependencies=[Depends(protected)])
+    def events(limit: int = Query(100, ge=1, le=500)):
+        return dict(
+            events=[
+                {
+                    k: _iso(v) if isinstance(v, datetime) else v
+                    for k, v in vars(a).items()
+                }
+                for a in store().list_alert_events(limit=limit)
+            ]
+        )
+
+    @app.get("/api/doctor", dependencies=[Depends(protected)])
+    def doctor():
+        return Doctor(config(), runtime.cloudways_client).run()
+
+    static = Path(static_dir) if static_dir else Path("frontend/dist")
+    index = static / "index.html"
+    if index.exists():
+        if (static / "assets").exists():
+            app.mount(
+                "/assets", StaticFiles(directory=static / "assets"), name="assets"
+            )
+
+        @app.get("/")
+        def frontend(request: Request):
+            return FileResponse(index) if user(request) else RedirectResponse("/login")
+
+        @app.get("/login")
+        def login_page():
+            return FileResponse(index)
+
+        @app.get("/favicon.svg")
+        def favicon():
+            return FileResponse(static / "favicon.svg")
 
     return app
 
 
-def _runtime_lifespan(runtime: RuntimeState):
-    @asynccontextmanager
-    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        _start_runtime_collector(runtime)
-        try:
-            yield
-        finally:
-            _stop_runtime_collector(runtime)
-
-    return lifespan
-
-def _start_runtime_collector(runtime: RuntimeState) -> None:
-    if runtime.telemetry_collector is not None:
-        return
-
-    try:
-        resolved_settings = Settings.from_env()
-    except SettingsError:
-        return
-
-    database = Database(resolved_settings.sqlite_path)
-    database.migrate()
-    resolved_storage = Storage(database)
-    resolved_cloudways_client = CloudwaysClient(resolved_settings)
-    notifier = TelegramNotifier(settings=resolved_settings)
-    alert_evaluator = AlertEvaluator(
-        settings=resolved_settings,
-        storage=resolved_storage,
-        notifier=notifier,
-    )
-    collector = TelemetryCollector(
-        settings=resolved_settings,
-        storage=resolved_storage,
-        telemetry_source=resolved_cloudways_client,
-        alert_evaluator=alert_evaluator,
-    )
-
-    runtime.settings = resolved_settings
-    runtime.storage = resolved_storage
-    runtime.cloudways_client = resolved_cloudways_client
-    runtime.telemetry_collector = collector
-
-    collector.start()
-
-
-def _stop_runtime_collector(runtime: RuntimeState) -> None:
-    if runtime.telemetry_collector is not None:
-        runtime.telemetry_collector.stop()
-
-
-def _current_time(clock: Callable[[], datetime] | None) -> datetime:
-    if clock is not None:
-        return clock()
-    return datetime.now(UTC)
-
-
-def _collector_health_to_dict(
-    telemetry_collector: TelemetryCollector | None,
-) -> dict[str, object]:
-    if telemetry_collector is None:
-        return {
-            "status": "never_run",
-            "last_run_at": None,
-            "last_success_at": None,
-            "servers_discovered": 0,
-            "applications_discovered": 0,
-            "snapshots_stored": 0,
-            "snapshots_expired": 0,
-            "stale": True,
-            "last_error_code": None,
-            "last_error": None,
-        }
-    return telemetry_collector.health.as_dict()
-
-
-def _overview_to_dict(
-    *,
-    storage: Storage,
-    settings: Settings,
-    now: datetime,
-    collector: dict[str, object],
-) -> dict[str, object]:
-    resources = storage.list_resources()
-    resources_by_id = {resource.id: resource for resource in resources}
-    latest_by_resource_id = {
-        resource.id: storage.get_latest_metric_snapshot(resource.id)
-        for resource in resources
-    }
-    active_alerts = storage.list_alert_states(status="active")
-    alerts_by_resource_id = _active_alerts_by_resource_id(storage)
-
-    application_summaries_by_parent: dict[str, list[dict[str, object]]] = {}
-    for resource in resources:
-        if resource.resource_type != "application":
-            continue
-        summary = _resource_summary_to_dict(
-            resource=resource,
-            latest=latest_by_resource_id[resource.id],
-            alerts=alerts_by_resource_id.get(resource.id, []),
-            settings=settings,
-            now=now,
-        )
-        if resource.parent_provider_id is not None:
-            application_summaries_by_parent.setdefault(
-                resource.parent_provider_id,
-                [],
-            ).append(summary)
-
-    servers = []
-    for resource in resources:
-        if resource.resource_type != "server":
-            continue
-        summary = _resource_summary_to_dict(
-            resource=resource,
-            latest=latest_by_resource_id[resource.id],
-            alerts=alerts_by_resource_id.get(resource.id, []),
-            settings=settings,
-            now=now,
-        )
-        summary["applications"] = application_summaries_by_parent.get(
-            resource.provider_id,
-            [],
-        )
-        servers.append(summary)
-
-    stale_resource_count = sum(
-        1
-        for snapshot in latest_by_resource_id.values()
-        if _snapshot_is_stale(snapshot=snapshot, settings=settings, now=now)
-    )
-    active_alert_dicts = [
-        _overview_alert_to_dict(alert, resources_by_id.get(alert.resource_id))
-        for alert in active_alerts
-    ]
-    needs_attention = bool(active_alert_dicts) or stale_resource_count > 0
-    return {
-        "attention": {
-            "status": "needs_attention" if needs_attention else "ok",
-            "active_alert_count": len(active_alert_dicts),
-            "stale_resource_count": stale_resource_count,
-        },
-        "collector": collector,
-        "active_alerts": active_alert_dicts,
-        "servers": servers,
-    }
-
-
-def _active_alerts_by_resource_id(storage: Storage) -> dict[int, list[AlertState]]:
-    alerts_by_resource_id: dict[int, list[AlertState]] = {}
-    for alert in storage.list_alert_states(status="active"):
-        alerts_by_resource_id.setdefault(alert.resource_id, []).append(alert)
-    return alerts_by_resource_id
-
-
-def _sorted_resources(resources: list[MonitoredResource]) -> list[MonitoredResource]:
-    return sorted(
-        resources,
-        key=lambda resource: (
-            0 if resource.resource_type == "server" else 1,
-            resource.provider_id,
-        ),
-    )
-
-
-def _parent_server_for(
-    *,
-    resource: MonitoredResource,
-    resources: list[MonitoredResource],
-) -> MonitoredResource | None:
-    if resource.resource_type != "application" or resource.parent_provider_id is None:
-        return None
-    for candidate in resources:
-        if (
-            candidate.resource_type == "server"
-            and candidate.provider_id == resource.parent_provider_id
-        ):
-            return candidate
-    return None
-
-def _range_delta(range_key: DashboardRange) -> timedelta:
-    return {
-        "1h": timedelta(hours=1),
-        "6h": timedelta(hours=6),
-        "24h": timedelta(hours=24),
-        "7d": timedelta(days=7),
-        "30d": timedelta(days=30),
-    }[range_key]
-
-
-def _resource_identity_to_dict(resource: MonitoredResource) -> dict[str, object]:
-    return {
-        "id": resource.id,
-        "provider_id": resource.provider_id,
-        "resource_type": resource.resource_type,
-        "name": resource.name,
-        "parent_provider_id": resource.parent_provider_id,
-    }
-
-
-def _series_point_to_dict(snapshot: MetricSnapshot) -> dict[str, object]:
-    return {
-        "captured_at": snapshot.captured_at.isoformat(),
-        "cpu_percent": snapshot.cpu_percent,
-        "ram_used_mb": snapshot.ram_used_mb,
-        "ram_total_mb": snapshot.ram_total_mb,
-        "ram_percent": snapshot.ram_percent,
-        "disk_used_gb": snapshot.disk_used_gb,
-        "disk_total_gb": snapshot.disk_total_gb,
-        "disk_percent": snapshot.disk_percent,
-        "bandwidth_bytes": snapshot.bandwidth_bytes,
-        "traffic_requests": snapshot.traffic_requests,
-        "collection_status": snapshot.collection_status,
-        "error_code": snapshot.error_code,
-    }
-
-
-def _raw_snapshot_to_dict(snapshot: MetricSnapshot) -> dict[str, object]:
-    return {
-        "captured_at": snapshot.captured_at.isoformat(),
-        "collection_status": snapshot.collection_status,
-        "error_code": snapshot.error_code,
-        "php_metric": snapshot.php_metric,
-        "mysql_metric": snapshot.mysql_metric,
-        "raw_payload": snapshot.raw_payload,
-    }
-
-
-def _resource_summary_to_dict(
-    *,
-    resource: MonitoredResource,
-    latest: MetricSnapshot | None,
-    alerts: list[AlertState],
-    settings: Settings,
-    now: datetime,
-) -> dict[str, object]:
-    return {
-        "id": resource.id,
-        "provider_id": resource.provider_id,
-        "resource_type": resource.resource_type,
-        "name": resource.name,
-        "parent_provider_id": resource.parent_provider_id,
-        "latest": _latest_snapshot_to_dict(
-            snapshot=latest,
-            settings=settings,
-            now=now,
-        ),
-        "alerts": [_compact_alert_to_dict(alert) for alert in alerts],
-    }
-
-
-def _latest_snapshot_to_dict(
-    *,
-    snapshot: MetricSnapshot | None,
-    settings: Settings,
-    now: datetime,
-) -> dict[str, object]:
-    if snapshot is None:
-        return {
-            "captured_at": None,
-            "stale": True,
-            "cpu_percent": None,
-            "ram_used_mb": None,
-            "ram_total_mb": None,
-            "ram_percent": None,
-            "disk_used_gb": None,
-            "disk_total_gb": None,
-            "disk_percent": None,
-            "bandwidth_bytes": None,
-            "traffic_requests": None,
-        }
-    return {
-        "captured_at": snapshot.captured_at.isoformat(),
-        "stale": _snapshot_is_stale(snapshot=snapshot, settings=settings, now=now),
-        "cpu_percent": snapshot.cpu_percent,
-        "ram_used_mb": snapshot.ram_used_mb,
-        "ram_total_mb": snapshot.ram_total_mb,
-        "ram_percent": snapshot.ram_percent,
-        "disk_used_gb": snapshot.disk_used_gb,
-        "disk_total_gb": snapshot.disk_total_gb,
-        "disk_percent": snapshot.disk_percent,
-        "bandwidth_bytes": snapshot.bandwidth_bytes,
-        "traffic_requests": snapshot.traffic_requests,
-    }
-
-
-def _snapshot_is_stale(
-    *,
-    snapshot: MetricSnapshot | None,
-    settings: Settings,
-    now: datetime,
-) -> bool:
-    if snapshot is None:
-        return True
-    return (now - snapshot.captured_at).total_seconds() > settings.effective_stale_after_seconds
-
-
-def _compact_alert_to_dict(alert: AlertState) -> dict[str, object]:
-    return {
-        "id": alert.id,
-        "rule_key": alert.rule_key,
-        "severity": alert.severity,
-        "status": alert.status,
-    }
-
-
-def _overview_alert_to_dict(
-    alert: AlertState,
-    resource: MonitoredResource | None,
-) -> dict[str, object]:
-    return {
-        "id": alert.id,
-        "resource_id": alert.resource_id,
-        "resource_name": resource.name if resource is not None else None,
-        "resource_type": resource.resource_type if resource is not None else None,
-        "rule_key": alert.rule_key,
-        "severity": alert.severity,
-        "status": alert.status,
-        "consecutive_breaches": alert.consecutive_breaches,
-        "opened_at": _iso(alert.opened_at),
-        "last_notification_at": _iso(alert.last_notification_at),
-    }
-
-def _resolve_settings(settings: Settings | None) -> Settings:
-    if settings is not None:
-        return settings
-    try:
-        return Settings.from_env()
-    except SettingsError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-
-def _current_user(
-    request: Request,
-    settings: Settings | None,
-) -> AuthenticatedUser | None:
-    token = request.cookies.get(SESSION_COOKIE_NAME)
-    if token is None:
-        return None
-    resolved_settings = _resolve_settings(settings)
-    return verify_session_token(token=token, secret=resolved_settings.session_secret)
-
-
-def _resolve_storage(
-    storage: Storage | None,
-    settings: Settings | None,
-) -> Storage:
-    if storage is not None:
-        return storage
-    resolved_settings = _resolve_settings(settings)
-    database = Database(resolved_settings.sqlite_path)
+def _make_storage(settings):
+    database = Database(settings.sqlite_path)
     database.migrate()
     return Storage(database)
 
 
-def _alert_state_to_dict(alert: AlertState) -> dict[str, object]:
-    return {
-        "id": alert.id,
-        "resource_id": alert.resource_id,
-        "rule_key": alert.rule_key,
-        "status": alert.status,
-        "severity": alert.severity,
-        "consecutive_breaches": alert.consecutive_breaches,
-        "opened_at": _iso(alert.opened_at),
-        "resolved_at": _iso(alert.resolved_at),
-        "last_notification_at": _iso(alert.last_notification_at),
-    }
-
-
-def _alert_event_to_dict(event: AlertEvent) -> dict[str, object]:
-    return {
-        "id": event.id,
-        "resource_id": event.resource_id,
-        "rule_key": event.rule_key,
-        "event_type": event.event_type,
-        "severity": event.severity,
-        "message": event.message,
-        "created_at": event.created_at.isoformat(),
-    }
-
-
-def _iso(value: datetime | None) -> str | None:
-    if value is None:
-        return None
-    return value.isoformat()
-
-
-def _mount_static_ui(
-    app: FastAPI,
-    static_dir: Path,
-    settings: Settings | None,
-) -> None:
-    index_path = static_dir / "index.html"
-    if not index_path.exists():
-        return
-
-    assets_dir = static_dir / "assets"
-    if assets_dir.exists():
-        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
-
-    @app.get("/")
-    def frontend_index(request: Request) -> Response:
-        if _current_user(request, settings) is None:
-            return RedirectResponse("/login")
-        return FileResponse(index_path)
-
-    @app.get("/{full_path:path}")
-    def frontend_fallback(
-        request: Request,
-        full_path: str,
-    ) -> Response:
-        if full_path == "health" or full_path.startswith("api/"):
-            raise HTTPException(status_code=404)
-        if full_path != "login" and _current_user(request, settings) is None:
-            return RedirectResponse("/login")
-
-        requested_path = (static_dir / full_path).resolve()
-        static_root = static_dir.resolve()
-        if requested_path.is_relative_to(static_root) and requested_path.is_file():
-            return FileResponse(requested_path)
-
-        return FileResponse(index_path)
+def _iso(value):
+    return value.isoformat() if value else None

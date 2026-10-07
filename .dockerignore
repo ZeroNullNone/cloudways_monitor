@@ -2,6 +2,8 @@
 .env.*
 !.env.example
 .git
+.tmp
+.venv
 .pytest_cache
 .ruff_cache
 __pycache__

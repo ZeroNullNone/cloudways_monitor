@@ -36,8 +36,7 @@ def hash_password(password: str) -> str:
         PASSWORD_HASH_ITERATIONS,
     )
     return (
-        f"pbkdf2_sha256:{PASSWORD_HASH_ITERATIONS}:{salt}:"
-        f"{_base64_urlencode(derived)}"
+        f"pbkdf2_sha256:{PASSWORD_HASH_ITERATIONS}:{salt}:{_base64_urlencode(derived)}"
     )
 
 
@@ -59,7 +58,10 @@ def verify_password(*, password: str, password_hash: str) -> bool:
 def create_session_token(*, username: str, secret: str) -> str:
     payload = _base64_urlencode(
         json.dumps(
-            {"expires_at": int(time.time()) + SESSION_MAX_AGE_SECONDS, "username": username},
+            {
+                "expires_at": int(time.time()) + SESSION_MAX_AGE_SECONDS,
+                "username": username,
+            },
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")

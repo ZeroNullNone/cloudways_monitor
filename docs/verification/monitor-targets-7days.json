@@ -1,0 +1,205 @@
+{
+  "date": "2026-10-06",
+  "timezone": "Asia/Singapore",
+  "real_data": true,
+  "scope": "one representative DigitalOcean server",
+  "duration": "7 Days",
+  "metrics": [
+    {
+      "target": "Idle CPU",
+      "status": "ok",
+      "error": null,
+      "series": [
+        {
+          "unit": "%",
+          "count": 168,
+          "nonzero": 168,
+          "min": 62.72166666666667,
+          "max": 82.96666666666667
+        }
+      ]
+    },
+    {
+      "target": "Free Disk",
+      "status": "ok",
+      "error": null,
+      "series": [
+        {
+          "unit": "GB",
+          "count": 168,
+          "nonzero": 168,
+          "min": 8.332,
+          "max": 8.405
+        }
+      ]
+    },
+    {
+      "target": "Reads per second",
+      "status": "ok",
+      "error": null,
+      "series": [
+        {
+          "unit": "ops/s",
+          "count": 168,
+          "nonzero": 168,
+          "min": 6.133333333333333,
+          "max": 882.7333333333332
+        }
+      ]
+    },
+    {
+      "target": "Writes per second",
+      "status": "ok",
+      "error": null,
+      "series": [
+        {
+          "unit": "ops/s",
+          "count": 168,
+          "nonzero": 167,
+          "min": 0.0,
+          "max": 574.2
+        }
+      ]
+    },
+    {
+      "target": "Free memory",
+      "status": "ok",
+      "error": null,
+      "series": [
+        {
+          "unit": "MB",
+          "count": 168,
+          "nonzero": 168,
+          "min": 537.8321066666666,
+          "max": 592.8209066666666
+        }
+      ]
+    },
+    {
+      "target": "Incoming network traffic",
+      "status": "ok",
+      "error": null,
+      "series": [
+        {
+          "unit": "Mbps",
+          "count": 167,
+          "nonzero": 167,
+          "min": 12.913494110107422,
+          "max": 279.3914693196639
+        }
+      ]
+    },
+    {
+      "target": "Outgoing network traffic",
+      "status": "ok",
+      "error": null,
+      "series": [
+        {
+          "unit": "Mbps",
+          "count": 167,
+          "nonzero": 167,
+          "min": 9.720929463714128,
+          "max": 7196.18558883667
+        }
+      ]
+    },
+    {
+      "target": "Monthly Bandwidth",
+      "status": "ok",
+      "error": null,
+      "series": [
+        {
+          "unit": "GB",
+          "count": 168,
+          "nonzero": 168,
+          "min": 0.0015,
+          "max": 9.68
+        }
+      ]
+    },
+    {
+      "target": "Memcached Fill Ratio",
+      "status": "ok",
+      "error": null,
+      "series": [
+        {
+          "unit": "%",
+          "count": 168,
+          "nonzero": 0,
+          "min": 0.0,
+          "max": 0.0
+        }
+      ]
+    },
+    {
+      "target": "Memcached Hit Rate",
+      "status": "warning",
+      "error": "Unit not confirmed for this target; unit-dependent alerts disabled",
+      "series": [
+        {
+          "unit": null,
+          "count": 168,
+          "nonzero": 0,
+          "min": 0.0,
+          "max": 0.0
+        }
+      ]
+    },
+    {
+      "target": "Varnish Hit Rate",
+      "status": "ok",
+      "error": null,
+      "series": [
+        {
+          "unit": "%",
+          "count": 168,
+          "nonzero": 0,
+          "min": 0.0,
+          "max": 0.0
+        }
+      ]
+    },
+    {
+      "target": "Varnish Nuked",
+      "status": "ok",
+      "error": null,
+      "series": [
+        {
+          "unit": "items",
+          "count": 168,
+          "nonzero": 0,
+          "min": 0.0,
+          "max": 0.0
+        }
+      ]
+    },
+    {
+      "target": "Auto-healing Restarts",
+      "status": "ok",
+      "error": null,
+      "series": [
+        {
+          "unit": "restarts",
+          "count": 168,
+          "nonzero": 1,
+          "min": 0.0,
+          "max": 1.0
+        }
+      ]
+    },
+    {
+      "target": "MySQL Connections",
+      "status": "ok",
+      "error": null,
+      "series": [
+        {
+          "unit": "connections",
+          "count": 168,
+          "nonzero": 0,
+          "min": 0.0,
+          "max": 0.0
+        }
+      ]
+    }
+  ]
+}

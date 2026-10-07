@@ -1,0 +1,109 @@
+{
+  "server": {
+    "label": "IMS",
+    "fields": {
+      "instance_type": "intel-2GB",
+      "volume_size": 50,
+      "data_volume_size": null,
+      "db_volume_size": null,
+      "storage": 100
+    }
+  },
+  "top_statuses": {
+    "elapsed_seconds": 11.125,
+    "keys": [
+      "created_at",
+      "top_statuses"
+    ],
+    "table_keys": [
+      "body",
+      "footer",
+      "header",
+      "from",
+      "until"
+    ],
+    "header": [
+      "Status",
+      "Count"
+    ],
+    "row_count": 1,
+    "sample_types": [
+      "str",
+      "int"
+    ],
+    "sample_numeric_values": [
+      null,
+      1
+    ]
+  },
+  "top_urls": {
+    "elapsed_seconds": 7.469,
+    "keys": [
+      "created_at",
+      "top_urls"
+    ],
+    "table_keys": [
+      "body",
+      "footer",
+      "header",
+      "from",
+      "until"
+    ],
+    "header": [
+      "URL",
+      "Count"
+    ],
+    "row_count": 1,
+    "sample_types": [
+      "str",
+      "int"
+    ],
+    "sample_numeric_values": [
+      null,
+      1
+    ]
+  },
+  "slow_pages": {
+    "elapsed_seconds": 11.015,
+    "keys": [
+      "slow_pages"
+    ],
+    "table_keys": [
+      "body",
+      "footer",
+      "header",
+      "from",
+      "until"
+    ],
+    "header": [
+      "URL",
+      "Occurrences",
+      "Max Time",
+      "Avg. Duration"
+    ],
+    "row_count": 0,
+    "sample_types": [],
+    "sample_numeric_values": []
+  },
+  "slow_queries": {
+    "elapsed_seconds": 7.36,
+    "keys": [
+      "slow_queries"
+    ],
+    "table_keys": [
+      "body",
+      "footer",
+      "header",
+      "from",
+      "until"
+    ],
+    "header": [
+      "Query",
+      "Execution Time",
+      "Occurrences"
+    ],
+    "row_count": 0,
+    "sample_types": [],
+    "sample_numeric_values": []
+  }
+}

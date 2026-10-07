@@ -1,0 +1,36 @@
+{
+  "checked_at": "2026-10-06T16:23:02.244957+00:00",
+  "real_cloudways_data": true,
+  "overview_http_status": 200,
+  "overview_elapsed_seconds": 0.031,
+  "servers": 4,
+  "applications": 19,
+  "applications_with_disk": 19,
+  "applications_without_disk": 0,
+  "applications_with_requests": 19,
+  "nonzero_request_counts": 9,
+  "zero_request_counts": 10,
+  "requests_pending": 0,
+  "pending_with_completed_requests": 0,
+  "bandwidth_unavailable": 19,
+  "fabricated_bandwidth_values": 0,
+  "minimum_disk_gb": 0.00864,
+  "maximum_disk_gb": 1.77685591293,
+  "disk_source_timestamps": [
+    "2026-10-06T00:00:00+00:00"
+  ],
+  "disk_diagnostics": [],
+  "telegram_enabled": false,
+  "collector": {
+    "status": "ok",
+    "last_run_at": "2026-10-06T16:22:47.703080+00:00",
+    "last_success_at": "2026-10-06T16:23:02.019623+00:00",
+    "servers_discovered": 4,
+    "applications_discovered": 19,
+    "snapshots_stored": 23,
+    "snapshots_expired": 0,
+    "stale": false,
+    "last_error_code": null,
+    "last_error": null
+  }
+}

@@ -10,8 +10,6 @@ from cloudways_monitor.settings import Settings
 
 
 class CloudwaysReadinessClient(Protocol):
-    def authenticate(self) -> str: ...
-
     def list_servers(self) -> Sequence[object]: ...
 
     def list_applications(self) -> Sequence[object]: ...
@@ -81,7 +79,6 @@ class Doctor:
                 "authenticated": False,
             }
         try:
-            self._cloudways_client.authenticate()
             servers = self._cloudways_client.list_servers()
             applications = self._cloudways_client.list_applications()
         except CloudwaysApiError as exc:

@@ -24,7 +24,7 @@ def test_alert_api_exposes_current_states_and_events(tmp_path) -> None:
     )
     state = storage.save_alert_state(
         resource_id=resource_id,
-        rule_key="cpu_percent",
+        rule_key="Idle CPU",
         status="active",
         severity="critical",
         consecutive_breaches=3,
@@ -34,10 +34,10 @@ def test_alert_api_exposes_current_states_and_events(tmp_path) -> None:
     )
     event = storage.insert_alert_event(
         resource_id=resource_id,
-        rule_key="cpu_percent",
+        rule_key="Idle CPU",
         event_type="opened",
         severity="critical",
-        message="production critical cpu_percent 98.0 >= 95.0 for 3 polls",
+        message="production critical Idle CPU 4.0 <= 5.0 for 3 samples",
         created_at=now,
     )
     client = TestClient(
@@ -54,7 +54,7 @@ def test_alert_api_exposes_current_states_and_events(tmp_path) -> None:
             {
                 "id": state.id,
                 "resource_id": resource_id,
-                "rule_key": "cpu_percent",
+                "rule_key": "Idle CPU",
                 "status": "active",
                 "severity": "critical",
                 "consecutive_breaches": 3,
@@ -70,10 +70,10 @@ def test_alert_api_exposes_current_states_and_events(tmp_path) -> None:
             {
                 "id": event.id,
                 "resource_id": resource_id,
-                "rule_key": "cpu_percent",
+                "rule_key": "Idle CPU",
                 "event_type": "opened",
                 "severity": "critical",
-                "message": ("production critical cpu_percent 98.0 >= 95.0 for 3 polls"),
+                "message": ("production critical Idle CPU 4.0 <= 5.0 for 3 samples"),
                 "created_at": now.isoformat(),
             }
         ]
@@ -96,7 +96,7 @@ def test_alert_api_uses_configured_storage_when_not_injected(tmp_path) -> None:
     )
     storage.save_alert_state(
         resource_id=resource_id,
-        rule_key="cpu_percent",
+        rule_key="Idle CPU",
         status="active",
         severity="critical",
         consecutive_breaches=3,
@@ -110,7 +110,7 @@ def test_alert_api_uses_configured_storage_when_not_injected(tmp_path) -> None:
     response = client.get("/api/alerts")
 
     assert response.status_code == 200
-    assert response.json()["alerts"][0]["rule_key"] == "cpu_percent"
+    assert response.json()["alerts"][0]["rule_key"] == "Idle CPU"
 
 
 def make_storage(settings: Settings) -> Storage:

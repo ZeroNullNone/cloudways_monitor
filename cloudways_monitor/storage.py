@@ -158,6 +158,31 @@ class Database:
 
                 CREATE INDEX IF NOT EXISTS idx_metric_snapshots_captured_at
                     ON metric_snapshots(captured_at);
+
+                CREATE TABLE IF NOT EXISTS monitor_graphs (
+                    resource_id INTEGER NOT NULL REFERENCES monitored_resources(id) ON DELETE CASCADE,
+                    target TEXT NOT NULL,
+                    duration TEXT NOT NULL,
+                    fetched_at TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    PRIMARY KEY(resource_id, target, duration)
+                );
+                CREATE TABLE IF NOT EXISTS alert_samples (
+                    resource_id INTEGER NOT NULL REFERENCES monitored_resources(id) ON DELETE CASCADE,
+                    target TEXT NOT NULL,
+                    sample_at TEXT NOT NULL,
+                    PRIMARY KEY(resource_id, target)
+                );
+                CREATE TABLE IF NOT EXISTS notification_outbox (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_id INTEGER UNIQUE REFERENCES alert_events(id) ON DELETE CASCADE,
+                    message TEXT NOT NULL,
+                    delivered INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE IF NOT EXISTS collector_alert_state (
+                    id INTEGER PRIMARY KEY CHECK(id=1),
+                    payload_json TEXT NOT NULL
+                );
                 """
             )
 
@@ -165,6 +190,116 @@ class Database:
 class Storage:
     def __init__(self, database: Database) -> None:
         self._database = database
+
+    def prune_resources(self, identities: set[tuple[str, str]]) -> None:
+        """Called only after a complete successful paginated discovery."""
+        with self._database.connect() as connection:
+            for row in connection.execute(
+                "SELECT id, provider_id, resource_type FROM monitored_resources"
+            ).fetchall():
+                if (row["provider_id"], row["resource_type"]) not in identities:
+                    connection.execute(
+                        "DELETE FROM monitored_resources WHERE id = ?", (row["id"],)
+                    )
+
+    def save_graph(self, resource_id: int, payload: dict[str, Any]) -> None:
+        with self._database.connect() as connection:
+            connection.execute(
+                "INSERT INTO monitor_graphs VALUES (?, ?, ?, ?, ?) ON CONFLICT(resource_id,target,duration) DO UPDATE SET fetched_at=excluded.fetched_at,payload_json=excluded.payload_json",
+                (
+                    resource_id,
+                    payload["target"],
+                    payload["duration"],
+                    payload["fetched_at"],
+                    _json(payload),
+                ),
+            )
+
+    def get_graph(
+        self, resource_id: int, target: str, duration: str
+    ) -> dict[str, Any] | None:
+        with self._database.connect() as connection:
+            row = connection.execute(
+                "SELECT payload_json FROM monitor_graphs WHERE resource_id=? AND target=? AND duration=?",
+                (resource_id, target, duration),
+            ).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def claim_alert_sample(self, resource_id: int, target: str, sample_at: str) -> bool:
+        with self._database.connect() as connection:
+            row = connection.execute(
+                "SELECT sample_at FROM alert_samples WHERE resource_id=? AND target=?",
+                (resource_id, target),
+            ).fetchone()
+            if row and row[0] >= sample_at:
+                return False
+            connection.execute(
+                "INSERT INTO alert_samples VALUES(?,?,?) ON CONFLICT(resource_id,target) DO UPDATE SET sample_at=excluded.sample_at",
+                (resource_id, target, sample_at),
+            )
+        return True
+
+    def queue_notification(self, event_id: int | None, message: str) -> None:
+        with self._database.connect() as connection:
+            connection.execute(
+                "INSERT INTO notification_outbox(event_id,message) VALUES(?,?)",
+                (event_id, message),
+            )
+
+    def pending_notifications(self) -> list[tuple[int, str]]:
+        with self._database.connect() as connection:
+            return [
+                (r[0], r[1])
+                for r in connection.execute(
+                    "SELECT id,message FROM notification_outbox WHERE delivered=0 ORDER BY id"
+                ).fetchall()
+            ]
+
+    def mark_notification_delivered(self, event_id: int) -> None:
+        with self._database.connect() as connection:
+            event = connection.execute(
+                "SELECT e.resource_id,e.rule_key FROM notification_outbox o JOIN alert_events e ON e.id=o.event_id WHERE o.id=?",
+                (event_id,),
+            ).fetchone()
+            connection.execute(
+                "UPDATE notification_outbox SET delivered=1 WHERE id=?",
+                (event_id,),
+            )
+            if event:
+                from datetime import UTC
+
+                connection.execute(
+                    "UPDATE alert_states SET last_notification_at=? WHERE resource_id=? AND rule_key=?",
+                    (datetime.now(UTC).isoformat(), event[0], event[1]),
+                )
+
+    def has_pending_notification(self, resource_id: int, target: str) -> bool:
+        with self._database.connect() as connection:
+            return (
+                connection.execute(
+                    "SELECT 1 FROM notification_outbox o JOIN alert_events e ON e.id=o.event_id WHERE o.delivered=0 AND e.resource_id=? AND e.rule_key=? LIMIT 1",
+                    (resource_id, target),
+                ).fetchone()
+                is not None
+            )
+
+    def get_collector_alert(self) -> dict[str, Any]:
+        with self._database.connect() as connection:
+            row = connection.execute(
+                "SELECT payload_json FROM collector_alert_state WHERE id=1"
+            ).fetchone()
+        return (
+            json.loads(row[0])
+            if row
+            else dict(failures=0, active=False, last_notification_at=None)
+        )
+
+    def save_collector_alert(self, state: dict[str, Any]) -> None:
+        with self._database.connect() as connection:
+            connection.execute(
+                "INSERT INTO collector_alert_state VALUES(1,?) ON CONFLICT(id) DO UPDATE SET payload_json=excluded.payload_json",
+                (_json(state),),
+            )
 
     def upsert_resource(
         self,

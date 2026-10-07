@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="11" skipped="0" tests="11" time="2.902" timestamp="2026-10-07T00:42:33.607842+08:00" hostname="Louis-PC"><testcase classname="tests.test_capacity_analytics_e2e" name="test_capacity_matches_do_block_storage_and_plan_ram" time="0.232"><failure message="KeyError: 'capacity'">tests\test_capacity_analytics_e2e.py:80: in test_capacity_matches_do_block_storage_and_plan_ram
+    assert servers[0]["latest"]["capacity"]["memory_gb"] == 2
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'capacity'</failure></testcase><testcase classname="tests.test_capacity_analytics_e2e" name="test_capacity_failure_keeps_existing_metrics" time="0.275"><failure message="assert False&#10; +  where False = any(&lt;generator object test_capacity_failure_keeps_existing_metrics.&lt;locals&gt;.&lt;genexpr&gt; at 0x000001A58F0EF780&gt;)">tests\test_capacity_analytics_e2e.py:98: in test_capacity_failure_keeps_existing_metrics
+    assert any(d["metric"] == "Capacity" for d in server["latest"]["diagnostics"])
+E   assert False
+E    +  where False = any(&lt;generator object test_capacity_failure_keeps_existing_metrics.&lt;locals&gt;.&lt;genexpr&gt; at 0x000001A58F0EF780&gt;)</failure></testcase><testcase classname="tests.test_capacity_analytics_e2e" name="test_analytics_requires_login_and_is_on_demand" time="0.147"><failure message="AssertionError: assert 404 == 401&#10; +  where 404 = &lt;Response [404 Not Found]&gt;.status_code&#10; +    where &lt;Response [404 Not Found]&gt; = analysis(&lt;starlette.testclient.TestClient object at 0x000001A58EFF4C20&gt;, MonitoredResource(id=3, provider_id='1', resource_type='application', name='App 1', parent_provider_id='1', raw={'app_...fo=datetime.timezone.utc), updated_at=datetime.datetime(2026, 10, 6, 16, 42, 34, 785172, tzinfo=datetime.timezone.utc)))">tests\test_capacity_analytics_e2e.py:104: in test_analytics_requires_login_and_is_on_demand
+    assert analysis(client, app).status_code == 401
+E   AssertionError: assert 404 == 401
+E    +  where 404 = &lt;Response [404 Not Found]&gt;.status_code
+E    +    where &lt;Response [404 Not Found]&gt; = analysis(&lt;starlette.testclient.TestClient object at 0x000001A58EFF4C20&gt;, MonitoredResource(id=3, provider_id='1', resource_type='application', name='App 1', parent_provider_id='1', raw={'app_...fo=datetime.timezone.utc), updated_at=datetime.datetime(2026, 10, 6, 16, 42, 34, 785172, tzinfo=datetime.timezone.utc)))</failure></testcase><testcase classname="tests.test_capacity_analytics_e2e" name="test_pending_analysis_reuses_task_and_preserves_selected_window" time="0.186"><failure message="KeyError: 'status'">tests\test_capacity_analytics_e2e.py:119: in test_pending_analysis_reuses_task_and_preserves_selected_window
+    assert analysis(client, app).json()["status"] == "pending"
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'status'</failure></testcase><testcase classname="tests.test_capacity_analytics_e2e" name="test_analysis_summaries_are_honest_returned_counts[statuses-summary0]" time="0.193"><failure message="KeyError: 'status'">tests\test_capacity_analytics_e2e.py:139: in test_analysis_summaries_are_honest_returned_counts
+    assert result["status"] == "ok"
+           ^^^^^^^^^^^^^^^^
+E   KeyError: 'status'</failure></testcase><testcase classname="tests.test_capacity_analytics_e2e" name="test_analysis_summaries_are_honest_returned_counts[php-summary1]" time="0.182"><failure message="KeyError: 'status'">tests\test_capacity_analytics_e2e.py:139: in test_analysis_summaries_are_honest_returned_counts
+    assert result["status"] == "ok"
+           ^^^^^^^^^^^^^^^^
+E   KeyError: 'status'</failure></testcase><testcase classname="tests.test_capacity_analytics_e2e" name="test_analysis_summaries_are_honest_returned_counts[mysql-summary2]" time="0.181"><failure message="KeyError: 'status'">tests\test_capacity_analytics_e2e.py:139: in test_analysis_summaries_are_honest_returned_counts
+    assert result["status"] == "ok"
+           ^^^^^^^^^^^^^^^^
+E   KeyError: 'status'</failure></testcase><testcase classname="tests.test_capacity_analytics_e2e" name="test_missing_invalid_failed_and_limited_analytics_not_fabricated[null]" time="0.176"><failure message="KeyError: 'status'">tests\test_capacity_analytics_e2e.py:151: in test_missing_invalid_failed_and_limited_analytics_not_fabricated
+    assert result["status"] in ("warning", "error")
+           ^^^^^^^^^^^^^^^^
+E   KeyError: 'status'</failure></testcase><testcase classname="tests.test_capacity_analytics_e2e" name="test_missing_invalid_failed_and_limited_analytics_not_fabricated[invalid]" time="0.198"><failure message="KeyError: 'status'">tests\test_capacity_analytics_e2e.py:151: in test_missing_invalid_failed_and_limited_analytics_not_fabricated
+    assert result["status"] in ("warning", "error")
+           ^^^^^^^^^^^^^^^^
+E   KeyError: 'status'</failure></testcase><testcase classname="tests.test_capacity_analytics_e2e" name="test_missing_invalid_failed_and_limited_analytics_not_fabricated[failed]" time="0.201"><failure message="KeyError: 'status'">tests\test_capacity_analytics_e2e.py:151: in test_missing_invalid_failed_and_limited_analytics_not_fabricated
+    assert result["status"] in ("warning", "error")
+           ^^^^^^^^^^^^^^^^
+E   KeyError: 'status'</failure></testcase><testcase classname="tests.test_capacity_analytics_e2e" name="test_missing_invalid_failed_and_limited_analytics_not_fabricated[limited]" time="0.232"><failure message="KeyError: 'status'">tests\test_capacity_analytics_e2e.py:151: in test_missing_invalid_failed_and_limited_analytics_not_fabricated
+    assert result["status"] in ("warning", "error")
+           ^^^^^^^^^^^^^^^^
+E   KeyError: 'status'</failure></testcase></testsuite></testsuites>

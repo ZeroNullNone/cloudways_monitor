@@ -3,69 +3,42 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal, Mapping, Protocol, Sequence, cast
+from typing import Any, Protocol
 
 from cloudways_monitor.cloudways import CloudwaysApiError
+from cloudways_monitor.alerts import TelegramNotificationError
 from cloudways_monitor.settings import Settings
-from cloudways_monitor.storage import MetricSnapshot, ResourceType, Storage
-
-
-CollectorStatus = Literal["never_run", "ok", "degraded"]
+from cloudways_monitor.storage import MetricSnapshot, Storage
+from cloudways_monitor.monitor import latest_complete_point
 
 
 class Clock(Protocol):
     def now(self) -> datetime: ...
 
 
-class TelemetrySource(Protocol):
-    def list_servers(self) -> Sequence[Mapping[str, Any]]: ...
-
-    def list_applications(self) -> Sequence[Mapping[str, Any]]: ...
-
-    def get_server_metrics(self, server_id: str) -> Mapping[str, Any]: ...
-
-    def get_application_metrics(
-        self,
-        application_id: str,
-        server_id: str | None,
-    ) -> Mapping[str, Any]: ...
-
-
-class SnapshotAlertEvaluator(Protocol):
-    def evaluate_snapshot(self, snapshot: MetricSnapshot) -> None: ...
+class SystemClock:
+    def now(self) -> datetime:
+        return datetime.now(UTC)
 
 
 @dataclass(frozen=True)
 class CollectorHealth:
-    status: CollectorStatus
-    last_run_at: datetime | None
-    last_success_at: datetime | None
-    servers_discovered: int
-    applications_discovered: int
-    snapshots_stored: int
-    snapshots_expired: int
-    stale: bool
-    last_error_code: str | None
-    last_error: str | None
+    status: str = "never_run"
+    last_run_at: datetime | None = None
+    last_success_at: datetime | None = None
+    servers_discovered: int = 0
+    applications_discovered: int = 0
+    snapshots_stored: int = 0
+    snapshots_expired: int = 0
+    stale: bool = True
+    last_error_code: str | None = None
+    last_error: str | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
-            "status": self.status,
-            "last_run_at": _iso(self.last_run_at),
-            "last_success_at": _iso(self.last_success_at),
-            "servers_discovered": self.servers_discovered,
-            "applications_discovered": self.applications_discovered,
-            "snapshots_stored": self.snapshots_stored,
-            "snapshots_expired": self.snapshots_expired,
-            "stale": self.stale,
-            "last_error_code": self.last_error_code,
-            "last_error": self.last_error,
+            k: v.isoformat() if isinstance(v, datetime) else v
+            for k, v in vars(self).items()
         }
-
-
-class SystemClock:
-    def now(self) -> datetime:
-        return datetime.now(UTC)
 
 
 class TelemetryCollector:
@@ -74,328 +47,253 @@ class TelemetryCollector:
         *,
         settings: Settings,
         storage: Storage,
-        telemetry_source: TelemetrySource,
+        telemetry_source: Any,
         clock: Clock | None = None,
-        alert_evaluator: SnapshotAlertEvaluator | None = None,
-    ) -> None:
-        self._settings = settings
-        self._storage = storage
-        self._telemetry_source = telemetry_source
-        self._clock = clock or SystemClock()
-        self._alert_evaluator = alert_evaluator
+        alert_evaluator: Any = None,
+    ):
+        self._settings, self._storage, self._source = (
+            settings,
+            storage,
+            telemetry_source,
+        )
+        self._clock, self._alerts = clock or SystemClock(), alert_evaluator
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
-        self._health = CollectorHealth(
-            status="never_run",
-            last_run_at=None,
-            last_success_at=None,
-            servers_discovered=0,
-            applications_discovered=0,
-            snapshots_stored=0,
-            snapshots_expired=0,
-            stale=True,
-            last_error_code=None,
-            last_error=None,
-        )
+        self._run_lock = threading.Lock()
+        self._health = CollectorHealth()
+        self._offset = 0
 
     @property
     def health(self) -> CollectorHealth:
-        return self._current_health(self._clock.now())
+        stale = (
+            self._health.last_success_at is None
+            or (self._clock.now() - self._health.last_success_at).total_seconds()
+            > self._settings.stale_after_seconds
+        )
+        return replace(
+            self._health,
+            stale=stale,
+            status="degraded"
+            if stale and self._health.status == "ok"
+            else self._health.status,
+        )
 
     @property
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
-    def start(self, *, run_immediately: bool = True) -> None:
+    def start(self, *, run_immediately: bool = True):
         if self.is_running:
             return
-
         self._stop_event.clear()
         self._thread = threading.Thread(
             target=self._run_loop,
             args=(run_immediately,),
-            name="cloudways-telemetry-collector",
+            name="cloudways-collector",
             daemon=True,
         )
         self._thread.start()
 
-    def stop(self, *, timeout_seconds: float = 5.0) -> None:
-        thread = self._thread
-        if thread is None:
-            return
-
+    def stop(self, *, timeout_seconds: float = 25):
         self._stop_event.set()
-        if thread is not threading.current_thread():
-            thread.join(timeout=timeout_seconds)
-        if not thread.is_alive():
-            self._thread = None
+        if self._thread and self._thread is not threading.current_thread():
+            self._thread.join(timeout_seconds)
 
-    def run_once(self) -> CollectorHealth:
-        run_started_at = self._clock.now()
-        try:
-            servers = self._allowed_servers(self._telemetry_source.list_servers())
-            applications = self._allowed_applications(
-                self._telemetry_source.list_applications()
-            )
-            snapshots_stored = 0
-
-            for server in servers:
-                resource_id = self._upsert_resource(server, self._clock.now())
-                metrics = self._telemetry_source.get_server_metrics(
-                    _provider_id(server)
-                )
-                snapshot = _metric_snapshot(
-                    resource_id=resource_id,
-                    resource_type="server",
-                    metrics=metrics,
-                    captured_at=self._clock.now(),
-                )
-                self._storage.insert_metric_snapshot(snapshot)
-                if self._alert_evaluator is not None:
-                    self._alert_evaluator.evaluate_snapshot(snapshot)
-                snapshots_stored += 1
-
-            for application in applications:
-                resource_id = self._upsert_resource(application, self._clock.now())
-                metrics = self._telemetry_source.get_application_metrics(
-                    _provider_id(application),
-                    _parent_provider_id(application),
-                )
-                snapshot = _metric_snapshot(
-                    resource_id=resource_id,
-                    resource_type="application",
-                    metrics=metrics,
-                    captured_at=self._clock.now(),
-                )
-                self._storage.insert_metric_snapshot(snapshot)
-                if self._alert_evaluator is not None:
-                    self._alert_evaluator.evaluate_snapshot(snapshot)
-                snapshots_stored += 1
-
-            finished_at = self._clock.now()
-            snapshots_expired = self._storage.expire_metric_snapshots(
-                older_than=finished_at - timedelta(days=self._settings.retention_days)
-            )
-            self._health = CollectorHealth(
-                status="ok",
-                last_run_at=run_started_at,
-                last_success_at=finished_at,
-                servers_discovered=len(servers),
-                applications_discovered=len(applications),
-                snapshots_stored=snapshots_stored,
-                snapshots_expired=snapshots_expired,
-                stale=False,
-                last_error_code=None,
-                last_error=None,
-            )
-            return self._health
-        except CloudwaysApiError as exc:
-            failed_at = self._clock.now()
-            self._health = CollectorHealth(
-                status="degraded",
-                last_run_at=run_started_at,
-                last_success_at=self._health.last_success_at,
-                servers_discovered=self._health.servers_discovered,
-                applications_discovered=self._health.applications_discovered,
-                snapshots_stored=0,
-                snapshots_expired=0,
-                stale=self._is_stale(failed_at),
-                last_error_code=exc.code,
-                last_error=str(exc),
-            )
-            return self._health
-
-    def _current_health(self, now: datetime) -> CollectorHealth:
-        if self._health.status == "never_run":
-            return self._health
-
-        stale = self._is_stale(now)
-        status = self._health.status
-        if stale and status == "ok":
-            status = "degraded"
-        if stale == self._health.stale and status == self._health.status:
-            return self._health
-        return replace(self._health, status=status, stale=stale)
-
-    def _run_loop(self, run_immediately: bool) -> None:
-        if run_immediately and not self._stop_event.is_set():
+    def _run_loop(self, immediately: bool):
+        if immediately:
             self.run_once()
-
         while not self._stop_event.wait(self._settings.poll_interval_seconds):
             self.run_once()
 
-    def _allowed_servers(
-        self,
-        servers: Sequence[Mapping[str, Any]],
-    ) -> list[Mapping[str, Any]]:
-        allowed_ids = set(self._settings.monitored_server_ids)
-        if not allowed_ids:
-            return list(servers)
-        return [server for server in servers if _provider_id(server) in allowed_ids]
+    def run_once(self) -> CollectorHealth:
+        with self._run_lock:
+            started = self._clock.now()
+            try:
+                servers = self._source.list_servers()
+                apps = self._source.list_applications()
+                if self._settings.monitored_server_ids:
+                    servers = [
+                        s
+                        for s in servers
+                        if s["provider_id"] in self._settings.monitored_server_ids
+                    ]
+                server_ids = {s["provider_id"] for s in servers}
+                apps = [
+                    a
+                    for a in apps
+                    if a["parent_provider_id"] in server_ids
+                    and (
+                        not self._settings.monitored_app_ids
+                        or a["provider_id"] in self._settings.monitored_app_ids
+                    )
+                ]
+            except Exception as exc:
+                self._health = replace(
+                    self._health,
+                    status="degraded",
+                    last_run_at=started,
+                    snapshots_stored=0,
+                    last_error_code=getattr(exc, "code", "discovery_error"),
+                    last_error=_safe_error(exc),
+                )
+                if self._alerts:
+                    self._alerts.interrupt_pending_samples()
+                    self._alerts.evaluate_health(
+                        _safe_error(exc),
+                        started,
+                        authentication_failed=getattr(exc, "code", "")
+                        == "authentication_failed",
+                    )
+                    try:
+                        self._alerts.flush_notifications()
+                    except Exception:
+                        self._health = replace(
+                            self._health,
+                            last_error="Collection failed; Telegram delivery queued for retry",
+                        )
+                return self.health
+            self._storage.prune_resources(
+                {(r["provider_id"], r["resource_type"]) for r in servers + apps}
+            )
+            errors = []
+            stored = 0
+            resources = servers + apps
+            resource_ids = {
+                (r["resource_type"], r["provider_id"]): self._storage.upsert_resource(
+                    **r, discovered_at=started
+                )
+                for r in resources
+            }
+            if resources:
+                self._offset %= len(resources)
+                resources = resources[self._offset :] + resources[: self._offset]
+                self._offset += 1
+            for resource in resources:
+                if self._stop_event.is_set():
+                    break
+                now = self._clock.now()
+                rid = resource_ids[(resource["resource_type"], resource["provider_id"])]
+                try:
+                    if resource["resource_type"] == "server":
+                        metrics = self._source.get_server_metrics(
+                            resource["provider_id"]
+                        )
+                    else:
+                        metrics = self._source.get_application_metrics(
+                            resource["provider_id"], resource["parent_provider_id"]
+                        )
+                except Exception as exc:
+                    metrics = dict(
+                        diagnostics=[
+                            dict(
+                                metric="Collection",
+                                status="error",
+                                message=_safe_error(exc),
+                            )
+                        ]
+                    )
+                diagnostics = metrics.get("diagnostics", [])
+                if diagnostics:
+                    errors.extend(diagnostics)
+                snapshot = MetricSnapshot(
+                    resource_id=rid,
+                    resource_type=resource["resource_type"],
+                    captured_at=now,
+                    cpu_percent=None,
+                    ram_used_mb=None,
+                    ram_total_mb=None,
+                    ram_percent=None,
+                    disk_used_gb=metrics.get("disk_used_gb"),
+                    disk_total_gb=None,
+                    disk_percent=None,
+                    bandwidth_bytes=metrics.get("bandwidth_bytes"),
+                    traffic_requests=metrics.get("traffic_requests"),
+                    php_metric={},
+                    mysql_metric={},
+                    raw_payload=_snapshot_payload(metrics),
+                    collection_status="degraded" if diagnostics else "ok",
+                    error_code="partial_collection" if diagnostics else None,
+                )
+                self._storage.insert_metric_snapshot(snapshot)
+                stored += 1
+                for graph in metrics.get("graphs", {}).values():
+                    self._storage.save_graph(rid, graph)
+                if self._alerts:
+                    try:
+                        self._alerts.evaluate_snapshot(snapshot)
+                    except Exception as exc:
+                        errors.append(
+                            dict(
+                                metric="Telegram",
+                                status="error",
+                                message=_safe_error(exc),
+                            )
+                        )
+            if self._alerts:
+                try:
+                    self._alerts.evaluate_health(
+                        f"{len(errors)} metric collections need attention"
+                        if errors
+                        else None,
+                        self._clock.now(),
+                    )
+                    self._alerts.flush_notifications()
+                except Exception as exc:
+                    errors.append(
+                        dict(
+                            metric="Telegram", status="error", message=_safe_error(exc)
+                        )
+                    )
+            expired = self._storage.expire_metric_snapshots(
+                older_than=self._clock.now()
+                - timedelta(days=self._settings.retention_days)
+            )
+            self._health = CollectorHealth(
+                status="degraded" if errors else "ok",
+                last_run_at=started,
+                last_success_at=self._clock.now()
+                if stored
+                else self._health.last_success_at,
+                servers_discovered=len(servers),
+                applications_discovered=len(apps),
+                snapshots_stored=stored,
+                snapshots_expired=expired,
+                stale=not bool(stored),
+                last_error_code="partial_collection" if errors else None,
+                last_error="; ".join(
+                    dict.fromkeys(f"{e['metric']}: {e['message']}" for e in errors[:3])
+                )
+                if errors
+                else None,
+            )
+            return self.health
 
-    def _allowed_applications(
-        self,
-        applications: Sequence[Mapping[str, Any]],
-    ) -> list[Mapping[str, Any]]:
-        allowed_app_ids = set(self._settings.monitored_app_ids)
-        if allowed_app_ids:
-            return [
-                application
-                for application in applications
-                if _provider_id(application) in allowed_app_ids
-            ]
 
-        allowed_server_ids = set(self._settings.monitored_server_ids)
-        if not allowed_server_ids:
-            return list(applications)
-        return [
-            application
-            for application in applications
-            if _parent_provider_id(application) in allowed_server_ids
-        ]
-
-    def _upsert_resource(
-        self,
-        resource: Mapping[str, Any],
-        discovered_at: datetime,
-    ) -> int:
-        return self._storage.upsert_resource(
-            provider_id=_provider_id(resource),
-            resource_type=_resource_type(resource),
-            name=_resource_name(resource),
-            parent_provider_id=_parent_provider_id(resource),
-            raw=_raw(resource),
-            discovered_at=discovered_at,
-        )
-
-    def _is_stale(self, now: datetime) -> bool:
-        if self._health.last_success_at is None:
-            return True
-        return now - self._health.last_success_at > timedelta(
-            seconds=self._settings.effective_stale_after_seconds
-        )
-
-
-def _metric_snapshot(
-    *,
-    resource_id: int,
-    resource_type: ResourceType,
-    metrics: Mapping[str, Any],
-    captured_at: datetime,
-) -> MetricSnapshot:
-    ram_used_mb = _float_metric(metrics, "ram_used_mb", "memory_used_mb")
-    ram_total_mb = _float_metric(metrics, "ram_total_mb", "memory_total_mb")
-    disk_used_gb = _float_metric(metrics, "disk_used_gb", "storage_used_gb")
-    disk_total_gb = _float_metric(metrics, "disk_total_gb", "storage_total_gb")
-    ram_percent = _float_metric(metrics, "ram_percent", "memory_percent")
-    if ram_percent is None:
-        ram_percent = _percentage(ram_used_mb, ram_total_mb)
-    disk_percent = _float_metric(metrics, "disk_percent", "storage_percent")
-    if disk_percent is None:
-        disk_percent = _percentage(disk_used_gb, disk_total_gb)
-    return MetricSnapshot(
-        resource_id=resource_id,
-        resource_type=resource_type,
-        captured_at=captured_at,
-        cpu_percent=_float_metric(metrics, "cpu_percent", "cpu"),
-        ram_used_mb=ram_used_mb,
-        ram_total_mb=ram_total_mb,
-        ram_percent=ram_percent,
-        disk_used_gb=disk_used_gb,
-        disk_total_gb=disk_total_gb,
-        disk_percent=disk_percent,
-        bandwidth_bytes=_int_metric(metrics, "bandwidth_bytes", "bandwidth"),
-        traffic_requests=_int_metric(metrics, "traffic_requests", "requests"),
-        php_metric=_dict_metric(metrics, "php_metric"),
-        mysql_metric=_dict_metric(metrics, "mysql_metric"),
-        raw_payload=dict(metrics),
-        collection_status="ok",
-        error_code=None,
+def _safe_error(exc: Exception) -> str:
+    return (
+        str(exc)
+        if isinstance(exc, (CloudwaysApiError, ValueError, TelegramNotificationError))
+        else f"Collection failed: {exc.__class__.__name__}"
     )
 
 
-def _provider_id(resource: Mapping[str, Any]) -> str:
-    value = resource.get("provider_id")
-    if value is None or value == "":
-        raise ValueError("discovered resource is missing provider_id")
-    return str(value)
-
-
-def _resource_type(resource: Mapping[str, Any]) -> ResourceType:
-    value = resource.get("resource_type")
-    if value not in ("server", "application"):
-        raise ValueError("discovered resource has an invalid resource_type")
-    return cast(ResourceType, value)
-
-
-def _resource_name(resource: Mapping[str, Any]) -> str:
-    value = resource.get("name")
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    return _provider_id(resource)
-
-
-def _parent_provider_id(resource: Mapping[str, Any]) -> str | None:
-    value = resource.get("parent_provider_id")
-    if value is None or value == "":
-        return None
-    return str(value)
-
-
-def _raw(resource: Mapping[str, Any]) -> dict[str, Any]:
-    value = resource.get("raw")
-    if isinstance(value, dict):
-        return value
-    return {}
-
-
-def _float_metric(metrics: Mapping[str, Any], *keys: str) -> float | None:
-    for key in keys:
-        value = metrics.get(key)
-        if value is not None:
-            return _float(value)
-    return None
-
-
-def _int_metric(metrics: Mapping[str, Any], *keys: str) -> int | None:
-    for key in keys:
-        value = metrics.get(key)
-        if value is not None:
-            parsed = _float(value)
-            if parsed is not None:
-                return int(parsed)
-    return None
-
-
-def _dict_metric(metrics: Mapping[str, Any], key: str) -> dict[str, Any]:
-    value = metrics.get(key)
-    if isinstance(value, dict):
-        return value
-    return {}
-
-
-def _float(value: Any) -> float | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int | float):
-        return float(value)
-    if isinstance(value, str):
-        stripped = value.strip().removesuffix("%")
-        if stripped:
-            try:
-                return float(stripped)
-            except ValueError:
-                return None
-    return None
-
-
-def _percentage(used: float | None, total: float | None) -> float | None:
-    if used is None or total is None or total <= 0:
-        return None
-    return round((used / total) * 100, 2)
-
-
-def _iso(value: datetime | None) -> str | None:
-    if value is None:
-        return None
-    return value.isoformat()
+def _snapshot_payload(metrics: dict) -> dict:
+    """Store each fetch's latest source samples; full windows live in monitor_graphs."""
+    payload = {k: v for k, v in metrics.items() if k != "graphs"}
+    if "graphs" in metrics:
+        payload["graphs"] = {
+            target: {
+                **{k: v for k, v in graph.items() if k not in ("raw", "series")},
+                "series": [
+                    {
+                        **series,
+                        "points": [latest_complete_point(series["points"])]
+                        if latest_complete_point(series["points"])
+                        else series["points"][-1:],
+                    }
+                    for series in graph.get("series", [])
+                ],
+            }
+            for target, graph in metrics["graphs"].items()
+        }
+    return payload

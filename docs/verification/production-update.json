@@ -1,0 +1,69 @@
+{
+  "date": "2026-10-07",
+  "timezone": "UTC+8",
+  "cases": {
+    "wal": {
+      "status": "passed",
+      "phases": [
+        "config",
+        "build",
+        "run",
+        "ps",
+        "exec",
+        "cp",
+        "up",
+        "ps"
+      ],
+      "integrity": "ok",
+      "rows": 1
+    },
+    "git": {
+      "status": "passed",
+      "service_recreated": false,
+      "env_unchanged": true
+    },
+    "config": {
+      "status": "passed",
+      "service_recreated": false,
+      "env_unchanged": true
+    },
+    "build": {
+      "status": "passed",
+      "service_recreated": false,
+      "env_unchanged": true
+    },
+    "settings": {
+      "status": "passed",
+      "service_recreated": false,
+      "env_unchanged": true
+    },
+    "backup": {
+      "status": "passed",
+      "service_recreated": false,
+      "env_unchanged": true
+    },
+    "first-install": {
+      "status": "passed",
+      "backup_attempted": false
+    },
+    "alerts": {
+      "status": "passed",
+      "active_alerts": 1,
+      "retained_states": 5
+    }
+  },
+  "full_suite": {
+    "tests": 82,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "boundary": {
+    "bash": "real",
+    "sqlite": "real isolated WAL fixture",
+    "docker": "simulated",
+    "git": "simulated",
+    "production_deployment": false,
+    "live_credential_file_access": false
+  }
+}

@@ -37,5 +37,16 @@ def test_deployment_artifacts_package_single_container_for_caddy() -> None:
     assert "git pull --ff-only" in deploy
     assert "BACKUP_DIR:-/backups/cloudways_monitor" in deploy
     assert "docker compose cp" in deploy
-    assert "docker compose up -d --build --remove-orphans" in deploy
+    assert "docker compose config --quiet" in deploy
+    assert 'docker compose build "$service_name"' in deploy
+    assert "Settings.from_env()" in deploy
+    assert "source.backup(destination)" in deploy
+    assert (
+        'docker compose up -d --force-recreate --remove-orphans "$service_name"'
+        in deploy
+    )
     assert "docker compose ps" in deploy
+
+    dockerignore = (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
+    assert ".tmp" in dockerignore
+    assert ".venv" in dockerignore

@@ -1,0 +1,26 @@
+[
+  {
+    "chat_id": "test-chat",
+    "text": "Critical: Server 1\nIdle CPU: 4 % <= 5 %\n3 distinct samples\nSample: 2026-10-06 22:04:48 UTC+8\nTime: 2026-10-06 22:01:48 UTC+8\nhttps://monitor.example.com/#server-1"
+  },
+  {
+    "chat_id": "test-chat",
+    "text": "Critical: Server 1\nFree memory: 4 MB <= 128 MB\n3 distinct samples\nSample: 2026-10-06 22:04:48 UTC+8\nTime: 2026-10-06 22:01:48 UTC+8\nhttps://monitor.example.com/#server-1"
+  },
+  {
+    "chat_id": "test-chat",
+    "text": "Critical: Server 1\nFree Disk: 4 MB <= 2048 MB\n3 distinct samples\nSample: 2026-10-06 22:04:48 UTC+8\nTime: 2026-10-06 22:01:48 UTC+8\nhttps://monitor.example.com/#server-1"
+  },
+  {
+    "chat_id": "test-chat",
+    "text": "Critical: Server 2\nIdle CPU: 4 % <= 5 %\n3 distinct samples\nSample: 2026-10-06 22:04:48 UTC+8\nTime: 2026-10-06 22:01:49 UTC+8\nhttps://monitor.example.com/#server-2"
+  },
+  {
+    "chat_id": "test-chat",
+    "text": "Critical: Server 2\nFree memory: 4 MB <= 128 MB\n3 distinct samples\nSample: 2026-10-06 22:04:48 UTC+8\nTime: 2026-10-06 22:01:49 UTC+8\nhttps://monitor.example.com/#server-2"
+  },
+  {
+    "chat_id": "test-chat",
+    "text": "Critical: Server 2\nFree Disk: 4 MB <= 2048 MB\n3 distinct samples\nSample: 2026-10-06 22:04:48 UTC+8\nTime: 2026-10-06 22:01:49 UTC+8\nhttps://monitor.example.com/#server-2"
+  }
+]

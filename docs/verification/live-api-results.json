@@ -1,0 +1,17 @@
+{
+  "date": "2026-10-06",
+  "timezone": "Asia/Singapore",
+  "real_api": true,
+  "configuration_loaded_in_process": true,
+  "configuration_displayed_or_modified": false,
+  "telegram_sent": false,
+  "endpoints": [
+    {"path": "/monitor_targets", "http_status": 200},
+    {"path": "/monitor_durations", "http_status": 200},
+    {"path": "/servers", "http_status": 403, "error": "insufficient_scope", "message": "This token does not have access to this endpoint"},
+    {"path": "/apps/flexible", "http_status": 403, "error": "insufficient_scope", "message": "This token does not have access to this endpoint"}
+  ],
+  "resource_counts": null,
+  "telemetry_verified": false,
+  "required_action": "Grant read access to resource discovery and monitoring endpoints; rerun live verification."
+}

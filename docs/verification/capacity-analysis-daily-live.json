@@ -1,0 +1,18 @@
+{
+  "php": {
+    "status": "ok",
+    "duration": "1d",
+    "summary": {
+      "returned_slow_pages": 1
+    },
+    "error": null
+  },
+  "mysql": {
+    "status": "ok",
+    "duration": "1d",
+    "summary": {
+      "returned_slow_queries": 0
+    },
+    "error": null
+  }
+}

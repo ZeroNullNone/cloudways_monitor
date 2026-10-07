@@ -1,0 +1,27 @@
+{
+  "date": "2026-10-06",
+  "timezone": "Asia/Singapore",
+  "real_api": true,
+  "configuration_loaded_in_process": true,
+  "configuration_displayed_or_modified": false,
+  "telegram_sent": false,
+  "permission_issue_resolved": true,
+  "server_count": 4,
+  "application_count": 19,
+  "target_count": 14,
+  "duration_count": 5,
+  "representative_graphs": {
+    "Idle CPU": "parsed; unit missing",
+    "Free memory": "parsed; unit missing",
+    "Free Disk": "parsed; unit missing; slow source cadence"
+  },
+  "traffic_operation": "completed; top_statuses with Status/Count columns; empty representative staging table",
+  "application_usage_verified": false,
+  "application_summary_limits": "Actual db/bw shapes differ from documented meanings and omit units; no bandwidth or GB total inferred",
+  "local_preview": "http://127.0.0.1:8084",
+  "overview_status": 200,
+  "overview_server_count": 4,
+  "overview_application_count": 19,
+  "unit_dependent_alerts_verified": false,
+  "automated_checks_passed": 35
+}

@@ -36,8 +36,8 @@ The reverse proxy used on the Dashboard Host to expose Dockerized Python server 
 The Python HTTP service that exposes dashboard data and live telemetry updates to the browser.
 ### Dashboard UI
 The browser-based interface used to inspect live and historical Cloudways telemetry.
-### Live Update Stream
-The one-way browser subscription that delivers refreshed telemetry from the Dashboard API to the Dashboard UI.
+### Dashboard Polling
+Periodic browser requests for the latest overview and selected graph. Pending Cloudways operations use a shorter polling interval.
 ### Dashboard User
 The single personal user allowed to access the dashboard.
 
@@ -49,7 +49,7 @@ A threshold-based signal that telemetry has crossed a configured condition requi
 ### Telegram Notification
 An alert delivery message sent to the dashboard owner through Telegram.
 ### Sustained Breach
-An alert condition that remains true across enough consecutive polling intervals to be treated as actionable.
+An alert condition confirmed by enough distinct, fresh source samples. Fetching the same sample repeatedly does not advance confirmation.
 
 ### Alert Cooldown
 A suppression period after an alert notification during which repeated notifications for the same ongoing condition are not sent.
@@ -77,12 +77,12 @@ Optional configuration that limits which discovered servers or applications are 
 ### Telemetry Collector
 The component that periodically calls the Cloudways API, normalizes telemetry, stores metric snapshots, and evaluates alert rules.
 ### Last Known Telemetry
-The most recent successfully collected telemetry for a server or application, retained for display when fresh telemetry cannot be collected.
+The most recent successfully collected telemetry retained in history for diagnostics. It never replaces a null latest source sample in the current overview.
 
 ### Collector Health
 The dashboard's view of whether telemetry collection is currently succeeding, delayed, rate-limited, or failing.
 ### Chart Aggregation
-The process of grouping raw metric snapshots into time buckets for readable and efficient historical charts.
+Numeric summaries over valid samples in the returned Cloudways graph window. Charts preserve source timestamps and missing-data gaps.
 ### Snapshot Expiration
 The removal of metric snapshots older than the configured retention window.
 ### Doctor Check

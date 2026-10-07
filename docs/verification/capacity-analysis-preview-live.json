@@ -1,0 +1,122 @@
+{
+  "checked_at": "2026-10-06T16:58:47.874698+00:00",
+  "real_cloudways_data": true,
+  "servers": 4,
+  "applications": 19,
+  "capacities": [
+    {
+      "server": "Tian Tian Car",
+      "capacity": {
+        "disk_gb": 25.0,
+        "disk_source": "volume_size",
+        "fetched_at": "2026-10-06T16:57:46.510306+00:00",
+        "memory_gb": 1.0
+      }
+    },
+    {
+      "server": "Work (Old)",
+      "capacity": {
+        "disk_gb": 25.0,
+        "disk_source": "volume_size",
+        "fetched_at": "2026-10-06T16:57:54.547423+00:00",
+        "memory_gb": 1.0
+      }
+    },
+    {
+      "server": "IMS",
+      "capacity": {
+        "disk_gb": 100.0,
+        "disk_source": "storage",
+        "fetched_at": "2026-10-06T16:57:51.854083+00:00",
+        "memory_gb": 2.0
+      }
+    },
+    {
+      "server": "Work",
+      "capacity": {
+        "disk_gb": 25.0,
+        "disk_source": "volume_size",
+        "fetched_at": "2026-10-06T16:57:49.260609+00:00",
+        "memory_gb": 1.0
+      }
+    }
+  ],
+  "ims_capacity": {
+    "disk_gb": 100.0,
+    "disk_source": "storage",
+    "fetched_at": "2026-10-06T16:57:51.854083+00:00",
+    "memory_gb": 2.0
+  },
+  "telegram_enabled": false,
+  "analyses": {
+    "php": {
+      "http_status": 200,
+      "status": "ok",
+      "columns": [
+        "URL",
+        "Occurrences",
+        "Max Time",
+        "Avg. Duration"
+      ],
+      "returned_rows": 0,
+      "summary": {
+        "returned_slow_pages": 0
+      },
+      "duration": "1h",
+      "partial": true,
+      "elapsed_seconds": 8.406,
+      "error": null
+    },
+    "mysql": {
+      "http_status": 200,
+      "status": "ok",
+      "columns": [
+        "Query",
+        "Execution Time",
+        "Occurrences"
+      ],
+      "returned_rows": 0,
+      "summary": {
+        "returned_slow_queries": 0
+      },
+      "duration": "1h",
+      "partial": true,
+      "elapsed_seconds": 8.422,
+      "error": null
+    },
+    "statuses": {
+      "http_status": 200,
+      "status": "ok",
+      "columns": [
+        "Status",
+        "Count"
+      ],
+      "returned_rows": 2,
+      "summary": {
+        "returned_requests": 3,
+        "client_errors": 2,
+        "server_errors": 0
+      },
+      "duration": "1h",
+      "partial": true,
+      "elapsed_seconds": 7.344,
+      "error": null
+    },
+    "urls": {
+      "http_status": 200,
+      "status": "ok",
+      "columns": [
+        "URL",
+        "Count"
+      ],
+      "returned_rows": 3,
+      "summary": {
+        "returned_urls": 3
+      },
+      "duration": "1h",
+      "partial": true,
+      "elapsed_seconds": 8.391,
+      "error": null
+    }
+  }
+}

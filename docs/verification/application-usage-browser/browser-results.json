@@ -1,0 +1,85 @@
+{
+  "fixtureOnly": true,
+  "results": [
+    {
+      "name": "All servers initially expanded",
+      "pass": true
+    },
+    {
+      "name": "All 15 DigitalOcean targets available",
+      "pass": true
+    },
+    {
+      "name": "All six durations available",
+      "pass": true
+    },
+    {
+      "name": "Trailing null excluded; completed summary shown",
+      "pass": true
+    },
+    {
+      "name": "Latest has a clear visual priority",
+      "pass": true
+    },
+    {
+      "name": "Sample table and coverage footnotes removed",
+      "pass": true
+    },
+    {
+      "name": "Completed free-memory sample shown",
+      "pass": true
+    },
+    {
+      "name": "Actual zero retained",
+      "pass": true
+    },
+    {
+      "name": "Desktop has two columns and no page overflow",
+      "pass": true
+    },
+    {
+      "name": "Metric switch updates chart",
+      "pass": true
+    },
+    {
+      "name": "Long duration updates chart",
+      "pass": true
+    },
+    {
+      "name": "Collapse all hides graph controls",
+      "pass": true
+    },
+    {
+      "name": "Selections survive collapse",
+      "pass": true
+    },
+    {
+      "name": "Application search retains parent and filters siblings",
+      "pass": true
+    },
+    {
+      "name": "Returned request sorting orders biggest application first",
+      "pass": true
+    },
+    {
+      "name": "Disk usage shown for all applications",
+      "pass": true
+    },
+    {
+      "name": "Partial requests and unavailable bandwidth are labelled",
+      "pass": true
+    },
+    {
+      "name": "Mobile stacks panes without page overflow",
+      "pass": true
+    },
+    {
+      "name": "English UI and UTC+8",
+      "pass": true
+    },
+    {
+      "name": "No browser console errors",
+      "pass": true
+    }
+  ]
+}

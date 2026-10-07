@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="8" skipped="0" tests="8" time="2.456" timestamp="2026-10-06T23:50:27.303959+08:00" hostname="Louis-PC"><testcase classname="tests.test_redesign_e2e" name="test_real_application_disk_identity_units_and_missing_values[606.7]" time="0.241"><failure message="KeyError: 'disk_used_gb'">tests\test_redesign_e2e.py:333: in test_real_application_disk_identity_units_and_missing_values
+    assert latest["disk_used_gb"] == pytest.approx(disk_mb / 1000)
+           ^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'disk_used_gb'</failure></testcase><testcase classname="tests.test_redesign_e2e" name="test_real_application_disk_identity_units_and_missing_values[0]" time="0.202"><failure message="KeyError: 'disk_used_gb'">tests\test_redesign_e2e.py:333: in test_real_application_disk_identity_units_and_missing_values
+    assert latest["disk_used_gb"] == pytest.approx(disk_mb / 1000)
+           ^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'disk_used_gb'</failure></testcase><testcase classname="tests.test_redesign_e2e" name="test_real_application_disk_identity_units_and_missing_values[None]" time="0.197"><failure message="assert False&#10; +  where False = any(&lt;generator object test_real_application_disk_identity_units_and_missing_values.&lt;locals&gt;.&lt;genexpr&gt; at 0x000001287F822330&gt;)">tests\test_redesign_e2e.py:331: in test_real_application_disk_identity_units_and_missing_values
+    assert any(d["metric"] == "Disk" for d in latest["diagnostics"])
+E   assert False
+E    +  where False = any(&lt;generator object test_real_application_disk_identity_units_and_missing_values.&lt;locals&gt;.&lt;genexpr&gt; at 0x000001287F822330&gt;)</failure></testcase><testcase classname="tests.test_redesign_e2e" name="test_invalid_application_disk_is_withheld_without_losing_requests[unknown_unit]" time="0.201"><failure message="KeyError: 'traffic_requests'">tests\test_redesign_e2e.py:364: in test_invalid_application_disk_is_withheld_without_losing_requests
+    assert latest["traffic_requests"] == 0
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'traffic_requests'</failure></testcase><testcase classname="tests.test_redesign_e2e" name="test_invalid_application_disk_is_withheld_without_losing_requests[duplicate_identity]" time="0.213"><failure message="KeyError: 'traffic_requests'">tests\test_redesign_e2e.py:364: in test_invalid_application_disk_is_withheld_without_losing_requests
+    assert latest["traffic_requests"] == 0
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'traffic_requests'</failure></testcase><testcase classname="tests.test_redesign_e2e" name="test_invalid_application_disk_is_withheld_without_losing_requests[negative]" time="0.212"><failure message="KeyError: 'traffic_requests'">tests\test_redesign_e2e.py:364: in test_invalid_application_disk_is_withheld_without_losing_requests
+    assert latest["traffic_requests"] == 0
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'traffic_requests'</failure></testcase><testcase classname="tests.test_redesign_e2e" name="test_invalid_application_disk_is_withheld_without_losing_requests[wrong_identity]" time="0.203"><failure message="KeyError: 'traffic_requests'">tests\test_redesign_e2e.py:364: in test_invalid_application_disk_is_withheld_without_losing_requests
+    assert latest["traffic_requests"] == 0
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'traffic_requests'</failure></testcase><testcase classname="tests.test_redesign_e2e" name="test_application_disk_cached_once_per_parent_and_null_does_not_reuse_old_total" time="0.190"><failure message="assert 0 == 2&#10; +  where 0 = sum(&lt;generator object test_application_disk_cached_once_per_parent_and_null_does_not_reuse_old_total.&lt;locals&gt;.&lt;genexpr&gt; at 0x000001287F820A00&gt;)">tests\test_redesign_e2e.py:389: in test_application_disk_cached_once_per_parent_and_null_does_not_reuse_old_total
+    assert sum(path == "/server/monitor/summary" for path, _ in upstream.calls) == 2
+E   assert 0 == 2
+E    +  where 0 = sum(&lt;generator object test_application_disk_cached_once_per_parent_and_null_does_not_reuse_old_total.&lt;locals&gt;.&lt;genexpr&gt; at 0x000001287F820A00&gt;)</failure></testcase></testsuite></testsuites>
