@@ -29,6 +29,10 @@ git() {
   [ "$FAIL_PHASE" != git ]
 }
 docker() {
+  if [ "$1" = compose ] && [ "${2-}" = --progress ]; then
+    shift 3
+    set -- compose "$@"
+  fi
   printf 'docker %s\n' "$*" >> "$TEST_CALLS"
   case "$1 $2 ${3-}" in
     'compose ps --services')

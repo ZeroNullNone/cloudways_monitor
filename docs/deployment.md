@@ -28,6 +28,8 @@ Commit and push the prepared changes from the development checkout before updati
 
    Finally the script recreates the application container using the newly built image and updated environment. The named data volume is preserved. A plain `git pull` does not deploy code; `docker compose restart` does not apply new environment settings. See [Compose up](https://docs.docker.com/reference/cli/docker/compose/up/).
 
+   On small shared hosts, dependency installation can compete with running services. The runtime stage now depends on the completed frontend before starting pip, so the frontend build and backend installation do not overlap. This reduces concurrent work, but is not a guarantee that a 1 GB host has sufficient free memory. Frontend changes also invalidate the later Python installation layer. Installer logs and plain Compose build output expose progress. A production stall still requires checking host memory/swap, disk I/O and package-registry connectivity; the sequential order is a pressure reduction, not a verified diagnosis of an out-of-memory event.
+
 3. Confirm container state and the backend health check from the droplet. Health can initially show `starting` while the Docker health check runs:
 
    ```bash

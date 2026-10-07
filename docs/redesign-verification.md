@@ -8,6 +8,7 @@ Updated: 2026-10-07 (UTC+8). The implementation/browser acceptance below uses sy
 |---|---|---|
 | Python integration and retained checks | 82 passed after production-update checks | [JUnit results](verification/results.xml) |
 | Production-update preparation | 8 passed with simulated Docker/Git boundaries | [Update results](verification/production-update.json) |
+| Sequential small-host build | 9 selected deployment checks passed | [Deployment results](verification/sequential-build-after.xml) |
 | Browser acceptance | 29 passed | [Browser results](verification/capacity-analysis-browser/browser-results.json) |
 | Production frontend build | Passed, including TypeScript | `npm run build` |
 | Python lint | Passed | `ruff check cloudways_monitor tests scripts` |
@@ -26,6 +27,8 @@ The capacity/application-analysis addition has 15 scenarios specified before the
 Eight additional cases exercise the real Bash deployment script and protected alert routes using isolated fixtures. The online backup runs against a real SQLite WAL database with an open writer; the snapshot includes committed rows, excludes an uncommitted row and passes SQLite's integrity check. Git, Compose configuration, image build, application configuration and backup failures abort before the script recreates the service. First installation skips the backup. Removed alert rules do not appear in current counts or badges; stored alert events remain available.
 
 Docker and Git commands are simulated at the process boundary. No Docker daemon, production server, real credential file or external API is used by these tests. The local Docker daemon was unavailable, so no actual Docker image build or container recreation was verified. The full suite passed 82 checks with no skips; the existing browser/frontend verification remains the latest UI evidence because these preparation changes do not change the frontend. Repeat with `tests/test_production_update_e2e.py`; cases produce machine-readable results under `.tmp/e2e/production-update-*.json`. Summary: [update results](verification/production-update.json). Eight initial failures were recorded before the fixes in [pre-change results](verification/production-update-before.xml).
+
+The owner's production trace showed pip and npm installation overlapping for more than 30 minutes on a 1 CPU, 1 GB shared host. Resource exhaustion was suspected but could not be confirmed from host diagnostics. A deployment-file contract first failed because frontend artifacts were copied after pip installation. The copy now precedes pip, creating a stage dependency that makes frontend completion a prerequisite for backend installation. npm/pip installation logs and plain Compose progress are enabled. The file contract and eight existing isolated deployment cases pass: [before](verification/sequential-build-before.xml), [after](verification/sequential-build-after.xml). This is a pressure reduction and deployment-script verification, not a measured memory benchmark or proof that the production stall is resolved. The latest full-suite result above precedes this build-order change.
 
 ## Capacity and application analysis live check
 

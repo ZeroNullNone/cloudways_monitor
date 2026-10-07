@@ -16,6 +16,12 @@ def test_deployment_artifacts_package_single_container_for_caddy() -> None:
         ' "--host", "0.0.0.0", "--port", "8083"]'
     ) in dockerfile
 
+    # On the small shared host, the two installers must not run concurrently.
+    # COPY establishes a real stage dependency before the backend installer.
+    assert dockerfile.index("COPY --from=frontend") < dockerfile.index(
+        "RUN pip install"
+    )
+
     assert "cloudways-monitor:" in compose
     assert "build: ." in compose
     assert "env_file:" in compose
@@ -38,7 +44,7 @@ def test_deployment_artifacts_package_single_container_for_caddy() -> None:
     assert "BACKUP_DIR:-/backups/cloudways_monitor" in deploy
     assert "docker compose cp" in deploy
     assert "docker compose config --quiet" in deploy
-    assert 'docker compose build "$service_name"' in deploy
+    assert 'docker compose --progress plain build "$service_name"' in deploy
     assert "Settings.from_env()" in deploy
     assert "source.backup(destination)" in deploy
     assert (

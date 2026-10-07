@@ -2,7 +2,7 @@ FROM node:22-alpine AS frontend
 
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
-RUN npm ci
+RUN npm ci --loglevel=info
 COPY frontend/ ./
 RUN npm run build
 
@@ -13,11 +13,12 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
+# Finish the frontend before pip runs to limit concurrent work on small hosts.
+COPY --from=frontend /app/frontend/dist ./frontend/dist
+
 COPY pyproject.toml ./
 COPY cloudways_monitor ./cloudways_monitor
-RUN pip install --no-cache-dir .
-
-COPY --from=frontend /app/frontend/dist ./frontend/dist
+RUN pip install --no-cache-dir --verbose .
 
 EXPOSE 8083
 

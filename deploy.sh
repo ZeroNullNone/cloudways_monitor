@@ -11,7 +11,7 @@ service_name="${SERVICE_NAME:-cloudways-monitor}"
 
 # Prepare the new image and validate settings while the existing service runs.
 docker compose config --quiet
-docker compose build "$service_name"
+docker compose --progress plain build "$service_name"
 docker compose run --rm --no-deps --entrypoint python "$service_name" -c \
   'from cloudways_monitor.settings import Settings; Settings.from_env(); print("Configuration OK")'
 
