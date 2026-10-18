@@ -158,6 +158,7 @@ class TelemetryCollector:
             errors = []
             stored = 0
             resources = servers + apps
+            server_names = {s["provider_id"]: s["name"] for s in servers}
             resource_ids = {
                 (r["resource_type"], r["provider_id"]): self._storage.upsert_resource(
                     **r, discovered_at=started
@@ -194,7 +195,17 @@ class TelemetryCollector:
                     )
                 diagnostics = metrics.get("diagnostics", [])
                 if diagnostics:
-                    errors.extend(diagnostics)
+                    if resource["resource_type"] == "server":
+                        context = (
+                            f"Server: {resource['name']} (ID {resource['provider_id']})"
+                        )
+                    else:
+                        parent = resource["parent_provider_id"]
+                        context = (
+                            f"Server: {server_names[parent]} (ID {parent}) / "
+                            f"Application: {resource['name']} (ID {resource['provider_id']})"
+                        )
+                    errors.extend({**d, "resource": context} for d in diagnostics)
                 snapshot = MetricSnapshot(
                     resource_id=rid,
                     resource_type=resource["resource_type"],
@@ -232,7 +243,14 @@ class TelemetryCollector:
             if self._alerts:
                 try:
                     self._alerts.evaluate_health(
-                        f"{len(errors)} metric collections need attention"
+                        f"{len(errors)} collection diagnostics:\n"
+                        + "\n".join(
+                            dict.fromkeys(
+                                f"{e.get('resource', 'Collector')}: {e['metric']} "
+                                f"[{e['status']}] - {e['message']}"
+                                for e in errors
+                            )
+                        )
                         if errors
                         else None,
                         self._clock.now(),

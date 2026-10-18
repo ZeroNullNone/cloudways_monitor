@@ -232,13 +232,23 @@ class AlertEvaluator:
             due = (
                 last is None
                 or (when - last).total_seconds()
-                >= self._settings.alert_cooldown_seconds
+                >= self._settings.collection_alert_cooldown_seconds
             )
             if (
                 authentication_failed
-                or state["failures"] >= self._settings.alert_consecutive_polls
-            ) and (not state["active"] or due):
-                message = f"Collection needs attention\n{error}\nTime: {_display_time(when)}\n{self._settings.dashboard_base_url.rstrip('/')}"
+                or state["failures"]
+                >= self._settings.collection_alert_consecutive_polls
+            ) and due:
+                header = "Collection needs attention\n"
+                footer = f"\nTime: {_display_time(when)}\n{self._settings.dashboard_base_url.rstrip('/')}"
+                # Keep Telegram's 4096-character limit even with Unicode errors.
+                budget = max(0, 3900 - len((header + footer).encode("utf-8")))
+                detail = error.encode("utf-8")
+                if len(detail) > budget:
+                    marker = b"\n... details omitted; see dashboard"
+                    detail = detail[: max(0, budget - len(marker))]
+                    error = detail.decode("utf-8", errors="ignore") + marker.decode()
+                message = header + error + footer
                 if self._settings.telegram_enabled:
                     self._storage.queue_notification(None, message)
                 state.update(active=True, last_notification_at=when.isoformat())

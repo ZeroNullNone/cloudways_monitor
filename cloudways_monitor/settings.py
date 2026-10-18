@@ -51,6 +51,8 @@ class Settings:
     alert_rules: tuple[AlertRule, ...]
     alert_consecutive_polls: int
     alert_cooldown_seconds: int
+    collection_alert_consecutive_polls: int
+    collection_alert_cooldown_seconds: int
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
@@ -126,6 +128,12 @@ class Settings:
             alert_rules=rules,
             alert_consecutive_polls=number("ALERT_CONSECUTIVE_POLLS", 3),
             alert_cooldown_seconds=number("ALERT_COOLDOWN_SECONDS", 1800),
+            collection_alert_consecutive_polls=number(
+                "COLLECTION_ALERT_CONSECUTIVE_POLLS", 10
+            ),
+            collection_alert_cooldown_seconds=number(
+                "COLLECTION_ALERT_COOLDOWN_SECONDS", 21600
+            ),
         )
         if len(result.session_secret) < 16:
             raise SettingsError("SESSION_SECRET must be at least 16 characters")
